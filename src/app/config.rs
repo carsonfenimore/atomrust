@@ -1,17 +1,14 @@
-use std::error::Error;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde::Deserialize;
 
 use config::{Config, ConfigError};
 
-use crate::media::MediaDescriptor;
-
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
     pub server: Server,
-    pub media: Vec<Item>,
+    pub camera: Camera,
 }
 
 #[derive(Debug, Deserialize)]
@@ -21,47 +18,28 @@ pub struct Server {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct Item {
-    pub name: String,
-    pub path: String,
-    pub kind: MediaKind,
-    pub source: String,
+pub struct Camera {
+    pub rtsppath: String,
+    pub width: u32,
+    pub height: u32,
+    pub lowres_width: u32,
+    pub lowres_height: u32,
+    pub framerate: u8,
+    pub bitrate: String,
+    pub profile: String,
+    pub intraperiod: u8,
 }
 
-impl Item {
-    pub fn as_media_descriptor(&self) -> Result<MediaDescriptor, Box<dyn Error>> {
-        Ok(match self.kind {
-            MediaKind::File => MediaDescriptor::File(PathBuf::from(self.source.to_string())),
-            MediaKind::Stream => MediaDescriptor::Stream(self.source.parse()?)
-        })
-    }
-}
-
-impl fmt::Display for Item {
+impl fmt::Display for Camera {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "{} ({}): {} ({})",
-            self.name, self.path, self.source, self.kind,
+            "rpicam {}, {}x{}, {}fps, {} bitrate, {} profile, {} intra",
+            self.rtsppath, self.width, self.height, self.framerate, self.bitrate, self.profile, self.intraperiod
         )
     }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum MediaKind {
-    File,
-    Stream,
-}
-
-impl fmt::Display for MediaKind {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            MediaKind::File => write!(f, "file"),
-            MediaKind::Stream => write!(f, "live stream"),
-        }
-    }
-}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -70,7 +48,17 @@ impl Default for AppConfig {
                 host: "127.0.0.1".to_string(),
                 port: 554,
             },
-            media: Vec::new(),
+            camera: Camera {
+                rtsppath: "/atomrust".to_string(),
+                width: 1920,
+                height: 1080,
+                lowres_width: 300,
+                lowres_height: 300,
+                framerate: 30,
+                bitrate: "2mbps".to_string(),
+                profile: "main".to_string(),
+                intraperiod: 5,
+            }
         }
     }
 }

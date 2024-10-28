@@ -6,6 +6,7 @@ use oddity_sdp_protocol::{CodecInfo, Direction, Kind, Protocol, TimeRange};
 use crate::media::video::reader;
 use crate::media::video::rtp_muxer;
 use crate::media::MediaDescriptor;
+use crate::media::StreamInfo;
 
 pub use oddity_sdp_protocol::Sdp;
 
@@ -20,11 +21,7 @@ pub use oddity_sdp_protocol::Sdp;
 ///
 /// * `name` - Name of stream.
 /// * `descriptor` - Media stream descriptor.
-pub async fn create(name: &str, descriptor: &MediaDescriptor) -> Result<Sdp, SdpError> {
-    const ORIGIN_DUMMY_HOST: [u8; 4] = [0, 0, 0, 0];
-    const TARGET_DUMMY_HOST: [u8; 4] = [0, 0, 0, 0];
-    const TARGET_DUMMY_PORT: u16 = 0;
-
+pub async fn create_from_reader(name: &str, descriptor: &MediaDescriptor) -> Result<Sdp, SdpError> {
     tracing::trace!("sdp: initializing reader");
     let reader = reader::backend::make_reader_with_sane_settings(descriptor.clone().into())
         .await
@@ -32,10 +29,19 @@ pub async fn create(name: &str, descriptor: &MediaDescriptor) -> Result<Sdp, Sdp
     let best_video_stream = reader.best_video_stream_index().map_err(SdpError::Media)?;
     tracing::trace!(best_video_stream, "sdp: initialized reader");
 
+    let stream_info = reader.stream_info(best_video_stream).unwrap();
+    create_from_info(&name, stream_info).await
+}
+
+pub async fn create_from_info(name: &str, stream_info: StreamInfo) -> Result<Sdp, SdpError> {
+    const ORIGIN_DUMMY_HOST: [u8; 4] = [0, 0, 0, 0];
+    const TARGET_DUMMY_HOST: [u8; 4] = [0, 0, 0, 0];
+    const TARGET_DUMMY_PORT: u16 = 0;
+
     tracing::trace!("sdp: initializing muxer");
     let muxer = rtp_muxer::make_rtp_muxer_builder()
         .await
-        .and_then(|muxer| muxer.with_stream(reader.stream_info(best_video_stream)?))
+        .and_then(|muxer| muxer.with_stream(stream_info))
         .map_err(SdpError::Media)?
         .build();
     tracing::trace!("sdp: initialized muxer");
@@ -75,6 +81,10 @@ pub async fn create(name: &str, descriptor: &MediaDescriptor) -> Result<Sdp, Sdp
     tracing::trace!(%sdp, "generated sdp");
     Ok(sdp)
 }
+
+// TODO: add a method that takes streaminfo, which we already have from libcam,
+// and returns Sdp from that
+//
 
 #[derive(Debug)]
 pub enum SdpError {

@@ -4,6 +4,7 @@ mod net;
 mod runtime;
 mod session;
 mod source;
+mod libcam;
 
 use std::env;
 use std::error::Error;

@@ -1,7 +1,7 @@
 pub mod sdp;
 pub mod video;
 
-use video_rs::stream::StreamInfo;
+pub use video_rs::stream::StreamInfo;
 
 pub use video_rs::Packet;
 
@@ -47,6 +47,11 @@ impl MediaInfo {
         Ok(Self {
             streams: vec![reader.stream_info(best_video_stream_index)?],
         })
+    }
+    pub fn from_stream_info(stream_info: StreamInfo) -> Self {
+        Self {
+            streams: vec![stream_info],
+        }
     }
 }
 

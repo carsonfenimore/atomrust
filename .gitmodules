@@ -1,3 +1,6 @@
 [submodule "submodules/oddity-rtsp"]
 	path = submodules/oddity-rtsp
 	url = https://github.com/oddity-ai/oddity-rtsp.git
+[submodule "submodules/video-rs"]
+	path = submodules/video-rs
+	url = https://github.com/oddity-ai/video-rs.git

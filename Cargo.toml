@@ -17,6 +17,8 @@ tokio-stream = { version = "0.1" }
 tokio-util = { version = "0.7.1", default-features = false, features = [
     "codec",
 ] }
-video-rs = "0.9.0"
-#rslibcamlite = "0.1.2"
+video-rs = { path="submodules/video-rs" }
+ffmpeg-next = "7.1.0"
+ffmpeg-sys-next = "7.1.0"
+rslibcamlite = "0.1.6"
 #tflite = "0.9.8"

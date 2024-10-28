@@ -10,13 +10,14 @@ use tokio::sync::{Mutex, RwLock};
 use video_rs::Error as MediaError;
 
 use crate::media::sdp::{self, Sdp, SdpError};
-use crate::media::MediaDescriptor;
 use crate::runtime::task_manager::{Task, TaskContext};
 use crate::runtime::Runtime;
 use crate::source::{
     self, Source, SourceDelegate, SourcePath, SourcePathRef, SourceState, SourceStateRx,
     SourceStateTx,
 };
+use crate::media::StreamInfo;
+use crate::libcam::PacketTx;
 
 type SourceShared = Arc<Mutex<Source>>;
 type SourceMap = Arc<RwLock<HashMap<SourcePath, SourceShared>>>;
@@ -70,13 +71,15 @@ impl SourceManager {
         &self,
         name: &str,
         path: SourcePath,
-        descriptor: MediaDescriptor,
-    ) -> Result<(), RegisterSourceError> {
+        stream_info: StreamInfo,
+        packet_tx: PacketTx,
+        ) -> Result<(), RegisterSourceError> {
         let path = source::normalize_path(path);
         let source = Source::start(
             name,
             path.clone(),
-            descriptor,
+            packet_tx,
+            stream_info.clone(),
             self.source_state_tx.clone(),
             self.runtime.as_ref(),
         )
@@ -86,10 +89,18 @@ impl SourceManager {
         if let Entry::Vacant(entry) = self.sources.write().await.entry(path.clone()) {
             let _ = entry.insert(Arc::new(Mutex::new(source)));
             tracing::trace!(name, %path, "registered and started source");
-            tracing::trace!("requesting SDP for source to prime cache");
         } else {
             tracing::error!(name, %path, "source with given path already registered");
             return Err(RegisterSourceError::AlreadyRegistered);
+        }
+
+        let description = sdp::create_from_info(&name, stream_info).await;
+        if let Ok(description) = description.as_ref() {
+            self.source_descriptions_cache
+                .write()
+                .await
+                .insert(path.clone(), description.clone());
+            tracing::trace!(%path, "cached SDP");
         }
 
         if let Err(err) = self
@@ -114,30 +125,8 @@ impl SourceManager {
             tracing::trace!(%path, "pulled SDP from cache");
             Some(Ok(description))
         } else {
-            let source = self.sources.read().await.get(path).cloned();
-            if let Some(source) = source {
-                let source_name = source.lock().await.name.clone();
-                let source_descriptor = source.lock().await.descriptor.clone();
-                tracing::trace!("creating sdp for name '{}' and desciptor '{}'", source_name, source_descriptor);
-
-                if source_descriptor.to_string() == "stream: rpicam://" {
-                    tracing::trace!("rpicam - will wait until source provides first sps/pps before forming sdp");
-                    return Some(Err(SdpError::SdpNotReady));
-                }
-
-                let description = sdp::create(&source_name, &source_descriptor).await;
-                if let Ok(description) = description.as_ref() {
-                    self.source_descriptions_cache
-                        .write()
-                        .await
-                        .insert(path.into(), description.clone());
-                    tracing::trace!(%path, "cached SDP");
-                }
-                Some(description)
-            } else {
-                tracing::trace!(path, "tried to query SDP for source that does not exist");
-                None
-            }
+            tracing::trace!("rpicam - will wait until source provides first sps/pps before forming sdp");
+            return Some(Err(SdpError::SdpNotReady));
         }
     }
 
