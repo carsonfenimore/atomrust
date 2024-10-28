@@ -6,6 +6,7 @@ use tokio::task;
 use video_rs as video;
 
 use crate::media::{MediaDescriptor, MediaInfo};
+use super::times::Times;
 
 type Result<T> = std::result::Result<T, video::Error>;
 
@@ -133,28 +134,6 @@ impl Drop for StreamReader {
     }
 }
 
-struct Times {
-    next_dts: video::Time,
-    next_pts: video::Time,
-}
-
-impl Times {
-    pub fn new() -> Self {
-        Times {
-            next_dts: video::Time::zero(),
-            next_pts: video::Time::zero(),
-        }
-    }
-
-    pub fn update(&mut self, packet: &mut video::Packet) {
-        if packet.duration().has_value() {
-            packet.set_dts(self.next_dts);
-            packet.set_pts(self.next_pts);
-            self.next_dts = self.next_dts.aligned_with(packet.duration()).add();
-            self.next_pts = self.next_pts.aligned_with(packet.duration()).add();
-        }
-    }
-}
 
 // Holds functions that deal with the video backend stuff in `video_rs`.
 pub mod backend {

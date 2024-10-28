@@ -18,6 +18,9 @@ use crate::media::Packet;
 pub type PacketTx = broadcast::Sender<Packet>;
 pub type PacketRx = broadcast::Receiver<Packet>;
 
+use crate::media::video::times::Times;
+use video_rs as video;
+
 pub struct LibCamContext {
     pub client: LibCamClient,
     stream_tx: StreamTx,
@@ -33,6 +36,8 @@ pub struct LibCamCallback {
     stream: *mut ff::AVStream,
     stream_tx: StreamTx,
     packet_tx: PacketTx,
+    times: Times,
+    timebase: Rational,
 }
 
 impl LibCamContext {
@@ -84,6 +89,8 @@ impl LibCamCallback {
             stream: std::ptr::null_mut(),
             stream_tx: streamtx,
             packet_tx: packettx,
+            times: Times::new(),
+            timebase: Rational::new( 1000, config.framerate as i32 * 1000 ),
         });
 
         callback
@@ -99,17 +106,18 @@ impl ExternalCallback for LibCamCallback {
             if ! self.stream.is_null() {
                 tracing::trace!("Notifying app of streaminfo");
                 let codepar = Parameters::wrap( (*self.stream).codecpar, None );
-                let timebase = Rational::new( (*self.stream).time_base.num, (*self.stream).time_base.den );
                 const STREAM_INDEX: usize = 0;
-                let stream_info = StreamInfo::from_params(codepar, timebase, STREAM_INDEX).unwrap();
+                let stream_info = StreamInfo::from_params(codepar, self.timebase, STREAM_INDEX).unwrap();
                 let _ = self.stream_tx.send(stream_info);
             }
         } 
 
         if ! self.stream.is_null(){
-            let timebase = Rational::new( (*self.stream).time_base.num, (*self.stream).time_base.den );
             let bytesvec = unsafe { std::slice::from_raw_parts(bytes, count) };
-            let _ = self.packet_tx.send(Packet::new( AvPacket::copy(bytesvec), timebase));
+            let mut pkt = Packet::new( AvPacket::copy(bytesvec), self.timebase);
+            pkt.set_duration(video::Time::new(Some(1), self.timebase));
+            self.times.update(&mut pkt);
+            let _ = self.packet_tx.send(pkt);
         }
         self.h264_reporter.tick();
     }
