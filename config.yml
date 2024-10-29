@@ -1,0 +1,11 @@
+server:
+  host: 0.0.0.0
+  port: 5554
+camera:
+  rtsppath: "/atomrust"
+  width: 1920
+  height: 1080
+  framerate: 30
+  bitrate: "4mbps"
+  profile: "high"
+  intraperiod: 5
