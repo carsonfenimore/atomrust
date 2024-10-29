@@ -3,4 +3,4 @@
 	url = https://github.com/oddity-ai/oddity-rtsp.git
 [submodule "submodules/video-rs"]
 	path = submodules/video-rs
-	url = https://github.com/oddity-ai/video-rs.git
+	url = https://github.com/carsonfenimore/video-rs.git
