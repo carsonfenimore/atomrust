@@ -41,7 +41,7 @@ pub struct LibCamCallback {
 }
 
 impl LibCamContext {
-    const MAX_QUEUED_PACKETS: usize = 1024;
+    const MAX_QUEUED_PACKETS: usize = 30;
     pub fn new(camera: &Camera) -> Self {
         let libcam = LibCamClient::new();
         let (stream_tx, _) = broadcast::channel(Self::MAX_QUEUED_PACKETS);
