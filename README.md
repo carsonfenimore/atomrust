@@ -18,23 +18,20 @@ Atomrust combines RTSP (based on [https://github.com/oddity-ai/oddity-rtsp]) for
 ## Running
 Populate a config.yaml, such as the following
 
-``
-server:
-  host: 0.0.0.0
-  port: 5554
-camera:
-  rtsppath: "/video"
-  width: 1920
-  height: 1080
-  lowres_width: 300
-  lowres_height: 300
-  framerate: 30
-  bitrate: "4mbps"
-  profile: "main"
-  intraperiod: 5
-``
+    server:
+      host: 0.0.0.0
+      port: 5554
+    camera:
+      rtsppath: "/video"
+      width: 1920
+      height: 1080
+      lowres_width: 300
+      lowres_height: 300
+      framerate: 30
+      bitrate: "4mbps"
+      profile: "main"
+      intraperiod: 5
 
 Then run
 
-``
-atomrust config.yaml
+    atomrust config.yaml
