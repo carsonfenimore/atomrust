@@ -14,6 +14,10 @@ Atomrust combines RTSP (based on [https://github.com/oddity-ai/oddity-rtsp]) for
 ## Installation
   - Build and install libcamera/rpicam-apps
   - Build and install atomrust
+  - Grab stock tflite model files
+    - mobilenet v2: https://github.com/google-coral/edgetpu/raw/refs/heads/master/test_data/ssd_mobilenet_v2_coco_quant_postprocess.tflite
+    - coco_labels.txt: https://raw.githubusercontent.com/google-coral/edgetpu/refs/heads/master/test_data/coco_labels.txt   
+
 
 ## Running
 Populate a config.yaml, such as the following
@@ -37,6 +41,11 @@ Populate a config.yaml, such as the following
       host: "<mqtt_broker_ip>"
       port: <mqtt_broker_port_usually_1883>
       obj_name: "atomcam"
+
+
+## Development Status
+This project is under active development and isn't fully ready.   We hope to have an easily-deployable release soon.  
+
 
 Then run
 
