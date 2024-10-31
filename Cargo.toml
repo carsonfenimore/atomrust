@@ -21,4 +21,6 @@ video-rs = { path="submodules/video-rs" }
 ffmpeg-next = "7.1.0"
 ffmpeg-sys-next = "7.1.0"
 rslibcamlite = "0.1.6"
+serde_json = "1.0.132"
+paho-mqtt = "0.12.5"
 #tflite = "0.9.8"

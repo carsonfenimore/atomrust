@@ -5,6 +5,7 @@ mod runtime;
 mod session;
 mod source;
 mod libcam;
+mod hamqtt;
 
 use std::env;
 use std::error::Error;

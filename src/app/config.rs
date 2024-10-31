@@ -9,6 +9,16 @@ use config::{Config, ConfigError};
 pub struct AppConfig {
     pub server: Server,
     pub camera: Camera,
+    pub mqtt: MQTTConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MQTTConfig {
+    pub host: String,
+    pub port: u16,
+    pub username: String,
+    pub password: String,
+    pub obj_name: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -58,7 +68,15 @@ impl Default for AppConfig {
                 bitrate: "2mbps".to_string(),
                 profile: "main".to_string(),
                 intraperiod: 5,
-            }
+            },
+            mqtt: MQTTConfig {
+                host: "localhost".to_string(),
+                port: 1883,
+                username: "username".to_string(),
+                password: "password".to_string(),
+                obj_name: "atomcam".to_string(),
+            },
+
         }
     }
 }

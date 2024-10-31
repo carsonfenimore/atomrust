@@ -31,6 +31,12 @@ Populate a config.yaml, such as the following
       bitrate: "4mbps"
       profile: "main"
       intraperiod: 5
+    mqtt:
+      username: "mqttuser"
+      password: "mqttpass"
+      host: "<mqtt_broker_ip>"
+      port: <mqtt_broker_port_usually_1883>
+      obj_name: "atomcam"
 
 Then run
 

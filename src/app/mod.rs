@@ -15,6 +15,7 @@ use crate::source::source_manager::SourceManager;
 use crate::libcam::LibCamContext;
 use crate::libcam::PacketTx;
 use crate::media::StreamInfo;
+use crate::hamqtt::HAMQTTClient;
 
 macro_rules! handle_err {
     ($rt:ident, $expr:expr) => {
@@ -33,6 +34,7 @@ pub struct App {
     context: Arc<RwLock<AppContext>>,
     runtime: Arc<Runtime>,
     libcam: LibCamContext,
+    hamqtt: HAMQTTClient,
 }
 
 impl App {
@@ -63,11 +65,15 @@ impl App {
             initialize_server(&config, context.clone(), runtime.clone(),).await
         )?;
 
+        let ha_conf = config.mqtt;
+        let hamqtt = HAMQTTClient::new(ha_conf.host.as_str(), ha_conf.port, ha_conf.username.as_str(), ha_conf.password.as_str())?;
+
         Ok(Self {
             server,
             context,
             runtime,
             libcam,
+            hamqtt,
         })
     }
 
