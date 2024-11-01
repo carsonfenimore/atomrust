@@ -10,6 +10,15 @@ pub struct AppConfig {
     pub server: Server,
     pub camera: Camera,
     pub mqtt: MQTTConfig,
+    pub pipeline: PipelineConfig,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PipelineConfig {
+    pub model_filename: String,
+    pub threshold: f32,
+    pub label_filename: String,
+    pub num_threads: u32,
 }
 
 #[derive(Debug, Deserialize)]
@@ -76,7 +85,12 @@ impl Default for AppConfig {
                 password: "password".to_string(),
                 obj_name: "atomcam".to_string(),
             },
-
+            pipeline: PipelineConfig {
+                model_filename: "ssd_mobilenet_v2_coco_quant_postprocess.tflite".to_string(),
+                threshold: 0.6,
+                label_filename: "coco_labels.txt".to_string(),
+                num_threads: 2,
+            },
         }
     }
 }

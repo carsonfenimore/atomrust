@@ -6,6 +6,7 @@ mod session;
 mod source;
 mod libcam;
 mod hamqtt;
+mod pipeline;
 
 use std::env;
 use std::error::Error;

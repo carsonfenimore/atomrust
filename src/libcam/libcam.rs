@@ -21,13 +21,16 @@ pub type PacketRx = broadcast::Receiver<Packet>;
 use crate::media::video::times::Times;
 use video_rs as video;
 
+use crate::pipeline::TFLiteStage;
+use crate::app::config::PipelineConfig;
+
 pub struct LibCamContext {
     pub client: LibCamClient,
     stream_tx: StreamTx,
     pub packet_tx: PacketTx,
 }
 
-pub struct LibCamCallback {
+pub struct LibCamCallback<'a> {
     lowres_params: StreamParams,
     h264_params: StreamParams,
     h264_reporter: RateReporter,
@@ -38,15 +41,16 @@ pub struct LibCamCallback {
     packet_tx: PacketTx,
     times: Times,
     timebase: Rational,
+    tflite: TFLiteStage<'a>,
 }
 
 impl LibCamContext {
     const MAX_QUEUED_PACKETS: usize = 30;
-    pub fn new(camera: &Camera) -> Self {
+    pub fn new(camera: &Camera, pipeline: &PipelineConfig) -> Self {
         let libcam = LibCamClient::new();
         let (stream_tx, _) = broadcast::channel(Self::MAX_QUEUED_PACKETS);
         let (packet_tx, _) = broadcast::channel(Self::MAX_QUEUED_PACKETS);
-        let callback = LibCamCallback::new(&libcam, &camera, stream_tx.clone(), packet_tx.clone());
+        let callback = LibCamCallback::new(&libcam, &camera, &pipeline, stream_tx.clone(), packet_tx.clone());
         libcam.setCallbacks(callback);
 
         Self { client: libcam, 
@@ -66,9 +70,9 @@ impl LibCamContext {
 }
 
 
-impl LibCamCallback {
+impl<'a> LibCamCallback<'a> {
 
-    pub fn new(libcam: &LibCamClient, config: &Camera, streamtx: StreamTx, packettx: PacketTx) -> Box<Self> {
+    pub fn new(libcam: &LibCamClient, config: &Camera, pipeline: &PipelineConfig, streamtx: StreamTx, packettx: PacketTx) -> Box<Self> {
         //let lowres = StreamParams{ width: 300, height: 300, format: StreamFormat::STREAM_FORMAT_RGB, framerate: 30};
         //let h264_params = StreamParams{ width: 1920, height: 1080, format:  StreamFormat::STREAM_FORMAT_H264, framerate: 30};
 
@@ -80,6 +84,7 @@ impl LibCamCallback {
         tracing::trace!("trying lowres {}x{}", config.lowres_width, config.lowres_height);
         libcam.client.setupLowres(&lowres);
 
+        let tflite = TFLiteStage::new(&pipeline).unwrap();
         let callback = Box::new(Self {
             lowres_params: lowres,
             h264_params: h264_params,
@@ -91,6 +96,7 @@ impl LibCamCallback {
             packet_tx: packettx,
             times: Times::new(),
             timebase: Rational::new( 1000, config.framerate as i32 * 1000 ),
+            tflite,
         });
 
         callback
@@ -98,7 +104,7 @@ impl LibCamCallback {
 
 }
 
-impl ExternalCallback for LibCamCallback {
+impl<'a> ExternalCallback for LibCamCallback<'a> {
     unsafe fn callbackH264(&mut self, bytes: *mut u8, count: usize, _timestamp_us: i64, keyframe: bool ){
         tracing::trace!("Got h264 frame of {} bytes, keyframe {}, res {}x{}", count, keyframe, self.h264_params.width, self.h264_params.height);
         if self.stream.is_null(){
@@ -124,5 +130,7 @@ impl ExternalCallback for LibCamCallback {
     unsafe fn callbackLowres(&mut self, bytes: *mut u8, count: usize){
         tracing::trace!("Got h264 frame of {} bytes, res {}x{}", count, self.lowres_params.width, self.lowres_params.height);
         self.low_reporter.tick();
+
+
     }
 }

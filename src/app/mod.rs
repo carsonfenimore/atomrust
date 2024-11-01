@@ -41,7 +41,7 @@ impl App {
     pub async fn start(config: AppConfig) -> Result<App, Box<dyn Error>> {
         let runtime = Arc::new(Runtime::new());
 
-        let mut libcam = LibCamContext::new(&config.camera);
+        let mut libcam = LibCamContext::new(&config.camera, &config.pipeline );
         libcam.client.start(true);
         tracing::debug!("Waiting for stream_info");
         let stream_info = handle_err!(
