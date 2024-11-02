@@ -31,7 +31,7 @@ impl RateReporter {
         if self.isTimeToReport() {
             let dur = self.duration();
             let rate: f32 = self.count as f32 / dur;
-            tracing::trace!("{}: {} calls in past {} seconds; {} calls/sec", self.tag, self.count, dur, rate);
+            tracing::debug!("{}: {} calls in past {} seconds; {} calls/sec", self.tag, self.count, dur, rate);
             self.count = 0;
             self.timeOfLastReport = Instant::now();
         }
