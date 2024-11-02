@@ -41,12 +41,24 @@ Populate a config.yaml, such as the following
       host: "<mqtt_broker_ip>"
       port: <mqtt_broker_port_usually_1883>
       obj_name: "atomcam"
+    pipeline: 
+      model_filename: "ssd_mobilenet_v2_coco_quant_postprocess.tflite"
+      threshold: 0.6
+      label_filename: "coco_labels.txt"
+      num_threads: 2
 
+Then run
+
+    atomrust config.yaml
 
 ## Development Status
 This project is under active development and isn't fully ready.   We hope to have an easily-deployable release soon.  
 
 
-Then run
-
-    atomrust config.yaml
+## Changelog
+ - 0.1.1 
+	- added tflite (after accidentally deleting it before pushing the code)
+	- tie together mqtt and tflite objdet - home assistant, ala mqtt discovery, should now know when an objdet occurs.
+	  alarm clears 5 sec after nothing seen.
+ - 0.1.0 
+	- initial release performing parallel h264 rtsp streaming and no-op rgb (future feed for objdet)
