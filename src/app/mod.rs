@@ -6,14 +6,20 @@ use std::sync::Arc;
 
 use tokio::sync::RwLock;
 
+use crate::runtime::task_manager::Task;
 use crate::app::config::AppConfig;
 use crate::app::handler::AppHandler;
 use crate::net::server::Server;
 use crate::runtime::Runtime;
+use tokio::time::timeout;
+use std::time::Duration;
+
+
 use crate::session::session_manager::SessionManager;
 use crate::source::source_manager::SourceManager;
 use crate::libcam::LibCamContext;
 use crate::libcam::PacketTx;
+use crate::libcam::DetectionRx;
 use crate::media::StreamInfo;
 use crate::hamqtt::HAMQTTClient;
 
@@ -34,7 +40,7 @@ pub struct App {
     context: Arc<RwLock<AppContext>>,
     runtime: Arc<Runtime>,
     libcam: LibCamContext,
-    hamqtt: HAMQTTClient,
+    hamqtt: Arc<HAMQTTClient>,
 }
 
 impl App {
@@ -43,11 +49,13 @@ impl App {
 
         let mut libcam = LibCamContext::new(&config.camera, &config.pipeline );
         libcam.client.start(true);
-        tracing::debug!("Waiting for stream_info");
         let stream_info = handle_err!(
             runtime,
             libcam.delegate_stream_info().recv().await
         )?;
+        tracing::debug!("In app setting up sources; libcam index is {}\n", stream_info.index);
+
+        let obj_detections = libcam.delegate_detection();
         tracing::debug!("In app setting up sources; libcam index is {}\n", stream_info.index);
             
         let mut context = initialize_context(runtime.clone()).await;
@@ -65,8 +73,13 @@ impl App {
             initialize_server(&config, context.clone(), runtime.clone(),).await
         )?;
 
-        let ha_conf = config.mqtt;
-        let hamqtt = HAMQTTClient::new(ha_conf.host.as_str(), ha_conf.port, ha_conf.username.as_str(), ha_conf.password.as_str())?;
+        let ha_conf = &config.mqtt;
+        let hamqtt = Arc::new(HAMQTTClient::new(ha_conf.host.as_str(), ha_conf.port, ha_conf.username.as_str(), ha_conf.password.as_str())?);
+
+        handle_err!(
+            runtime,
+            create_objdet_worker(runtime.clone(), config.mqtt.obj_name.clone(), hamqtt.clone(), obj_detections).await
+        )?;
 
         Ok(Self {
             server,
@@ -77,6 +90,7 @@ impl App {
         })
     }
 
+
     pub async fn stop(&mut self) {
         self.server.stop().await;
         self.context.write().await.session_manager.stop().await;
@@ -86,6 +100,38 @@ impl App {
     }
 }
 
+async fn run_objdet(objname: String,  mqtt: Arc<HAMQTTClient>, mut detrx: DetectionRx) {
+    const OBJDET_TIMEOUT_MILLIS:u64 = 5000;
+    loop {
+        // After 5 seconds we just say no obj... in this way objdets clear...
+        match timeout(Duration::from_millis(OBJDET_TIMEOUT_MILLIS), detrx.recv()).await {
+            Ok(cmd) => {
+                    let num_dets = cmd.unwrap().len();
+                    tracing::debug!("Received {} detections", num_dets);
+                    let _ = mqtt.publish(&objname, "objDetCount", &num_dets.to_string(), "", "");
+                }
+            _ => {
+                tracing::debug!("Timeout waiting for objdet");
+                let _ = mqtt.publish(&objname, "objDetCount", "0", "", "");
+            },
+        };
+    }
+}
+
+async fn create_objdet_worker(runtime: Arc<Runtime>, objname: String, mqtt: Arc<HAMQTTClient>, detrx: DetectionRx) -> Result<Task, Box<dyn Error>> {
+    let worker = runtime
+        .task()
+        .spawn({
+            |task_context| {
+                run_objdet( objname,
+                    mqtt,
+                    detrx )
+            }
+        })
+    .await;
+
+    Ok(worker)
+}
 
 async fn initialize_server(
     config: &AppConfig,
@@ -109,6 +155,7 @@ async fn initialize_context(runtime: Arc<Runtime>) -> AppContext {
         session_manager: SessionManager::start(runtime.clone()).await,
     }
 }
+
 
 async fn register_sources_with_context(
     config: &AppConfig,

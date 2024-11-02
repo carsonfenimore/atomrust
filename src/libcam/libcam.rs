@@ -22,12 +22,17 @@ use crate::media::video::times::Times;
 use video_rs as video;
 
 use crate::pipeline::TFLiteStage;
+use crate::pipeline::Detections;
 use crate::app::config::PipelineConfig;
+
+pub type DetectionTx = broadcast::Sender<Detections>;
+pub type DetectionRx = broadcast::Receiver<Detections>;
 
 pub struct LibCamContext {
     pub client: LibCamClient,
     stream_tx: StreamTx,
     pub packet_tx: PacketTx,
+    detection_tx: DetectionTx,
 }
 
 pub struct LibCamCallback<'a> {
@@ -42,29 +47,39 @@ pub struct LibCamCallback<'a> {
     times: Times,
     timebase: Rational,
     tflite: TFLiteStage<'a>,
+    detection_tx: DetectionTx,
 }
 
 impl LibCamContext {
     const MAX_QUEUED_PACKETS: usize = 30;
+    const MAX_QUEUED_DETECTIONS : usize = 5;
     pub fn new(camera: &Camera, pipeline: &PipelineConfig) -> Self {
         let libcam = LibCamClient::new();
         let (stream_tx, _) = broadcast::channel(Self::MAX_QUEUED_PACKETS);
         let (packet_tx, _) = broadcast::channel(Self::MAX_QUEUED_PACKETS);
-        let callback = LibCamCallback::new(&libcam, &camera, &pipeline, stream_tx.clone(), packet_tx.clone());
+        let (detection_tx, _) = broadcast::channel(Self::MAX_QUEUED_DETECTIONS);
+        let callback = LibCamCallback::new(&libcam, &camera, &pipeline, 
+                                            stream_tx.clone(), 
+                                            packet_tx.clone(),
+                                            detection_tx.clone());
         libcam.setCallbacks(callback);
 
         Self { client: libcam, 
-               stream_tx: stream_tx,
-               packet_tx: packet_tx}
+               stream_tx,
+               packet_tx,
+               detection_tx,}
     }
 
     pub fn delegate_stream_info(&mut self) -> StreamRx {
         self.stream_tx.subscribe()
     }
 
+    pub fn delegate_detection(&mut self) -> DetectionRx {
+        self.detection_tx.subscribe()
+    }
+
     pub fn stop(&self){
-        // TODO: implement stop
-        //self.client.stop();
+        self.client.stop();
     }
 
 }
@@ -72,7 +87,10 @@ impl LibCamContext {
 
 impl<'a> LibCamCallback<'a> {
 
-    pub fn new(libcam: &LibCamClient, config: &Camera, pipeline: &PipelineConfig, streamtx: StreamTx, packettx: PacketTx) -> Box<Self> {
+    pub fn new(libcam: &LibCamClient, config: &Camera, pipeline: &PipelineConfig, 
+                streamtx: StreamTx, 
+                packettx: PacketTx,
+                detectiontx: DetectionTx) -> Box<Self> {
         //let lowres = StreamParams{ width: 300, height: 300, format: StreamFormat::STREAM_FORMAT_RGB, framerate: 30};
         //let h264_params = StreamParams{ width: 1920, height: 1080, format:  StreamFormat::STREAM_FORMAT_H264, framerate: 30};
 
@@ -84,7 +102,7 @@ impl<'a> LibCamCallback<'a> {
         tracing::trace!("trying lowres {}x{}", config.lowres_width, config.lowres_height);
         libcam.client.setupLowres(&lowres);
 
-        let tflite = TFLiteStage::new(&pipeline).unwrap();
+        let tflite = TFLiteStage::new(&pipeline, &config.lowres_width, &config.lowres_height).unwrap();
         let callback = Box::new(Self {
             lowres_params: lowres,
             h264_params: h264_params,
@@ -97,6 +115,7 @@ impl<'a> LibCamCallback<'a> {
             times: Times::new(),
             timebase: Rational::new( 1000, config.framerate as i32 * 1000 ),
             tflite,
+            detection_tx: detectiontx,
         });
 
         callback
@@ -128,9 +147,12 @@ impl<'a> ExternalCallback for LibCamCallback<'a> {
         self.h264_reporter.tick();
     }
     unsafe fn callbackLowres(&mut self, bytes: *mut u8, count: usize){
-        tracing::trace!("Got h264 frame of {} bytes, res {}x{}", count, self.lowres_params.width, self.lowres_params.height);
+        tracing::trace!("Got rgb frame; {} bytes, {}x{}", count, self.lowres_params.width, self.lowres_params.height);
         self.low_reporter.tick();
 
-
+        let dets = self.tflite.detect( std::slice::from_raw_parts(bytes, count) ).unwrap();
+        if dets.len() > 0 {
+            let _ = self.detection_tx.send(dets);
+        }
     }
 }
