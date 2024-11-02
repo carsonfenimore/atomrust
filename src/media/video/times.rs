@@ -19,7 +19,7 @@ impl Times {
             packet.set_pts(self.next_pts);
             self.next_dts = self.next_dts.aligned_with(packet.duration()).add();
             self.next_pts = self.next_pts.aligned_with(packet.duration()).add();
-            tracing::debug!("Updating pts/dts {}/{} pkt dur {}", self.next_pts.as_secs(), self.next_dts.as_secs(), packet.duration());
+            tracing::trace!("Updating pts/dts {}/{} pkt dur {}", self.next_pts.as_secs(), self.next_dts.as_secs(), packet.duration());
         }
     }
 }
