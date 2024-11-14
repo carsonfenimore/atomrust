@@ -1,5 +1,6 @@
 use paho_mqtt as mqtt;
 use serde_json::json;
+use serde::Serialize;
 
 
 pub struct HAMQTTClient {
@@ -21,17 +22,20 @@ impl HAMQTTClient {
         })
     }
 
-    pub fn publish(&self, object_id: &str, name: &str, value: &str, device_class: &str, unit_of_measurement: &str) 
+    pub fn publish<A: Serialize>(&self, object_id: &str, name: &str, value: A, device_class: &str, unit_of_measurement: &str) 
         -> Result<(), Box<dyn std::error::Error>>{
 
         let component = "sensor";
-        let config_topic = format!("{}/{}/{}_{}/config",self.topic_prefix, component, object_id, name);
-        let state_topic = format!("{}/{}/{}/state", self.topic_prefix, component, object_id);
+        let uniqueid = format!("{}_{}", object_id, name);
+        let config_topic = format!("{}/{}/{}/config",self.topic_prefix, component, uniqueid);
+        let state_topic = format!("{}/{}/{}/state", self.topic_prefix, component, uniqueid);
 
         let mut msg_json = json!({
             "name": name,
-            "value_template": format!("{{ value_json.{} }}", name),
+            "value_template": format!("{{{{ value_json.{} }}}}", name),
             "state_topic": state_topic,
+            "device": json!({"identifiers":object_id,"name":object_id}),
+            "unique_id": uniqueid,
         });
         if ! device_class.is_empty() {
             msg_json["device_class"] = json!(device_class);
