@@ -78,7 +78,7 @@ impl App {
 
         handle_err!(
             runtime,
-            create_objdet_worker(runtime.clone(), config.mqtt.obj_name.clone(), hamqtt.clone(), obj_detections).await
+            create_mqtt_publisher(runtime.clone(), config.mqtt.obj_name.clone(), hamqtt.clone(), obj_detections).await
         )?;
 
         Ok(Self {
@@ -100,7 +100,7 @@ impl App {
     }
 }
 
-async fn run_objdet(objname: String,  mqtt: Arc<HAMQTTClient>, mut detrx: DetectionRx) {
+async fn run_mqtt_publish(objname: String,  mqtt: Arc<HAMQTTClient>, mut detrx: DetectionRx) {
     const OBJDET_TIMEOUT_MILLIS:u64 = 5000;
     loop {
         // After 5 seconds we just say no obj... in this way objdets clear...
@@ -108,22 +108,22 @@ async fn run_objdet(objname: String,  mqtt: Arc<HAMQTTClient>, mut detrx: Detect
             Ok(cmd) => {
                     let num_dets = cmd.unwrap().len();
                     tracing::debug!("Received {} detections", num_dets);
-                    let _ = mqtt.publish(&objname, "objDetCount", &num_dets.to_string(), "", "");
+                    let _ = mqtt.publish(&objname, "objDetCount", num_dets, "", "");
                 }
             _ => {
                 tracing::debug!("Timeout waiting for objdet");
-                let _ = mqtt.publish(&objname, "objDetCount", "0", "", "");
+                let _ = mqtt.publish(&objname, "objDetCount", 0, "", "");
             },
         };
     }
 }
 
-async fn create_objdet_worker(runtime: Arc<Runtime>, objname: String, mqtt: Arc<HAMQTTClient>, detrx: DetectionRx) -> Result<Task, Box<dyn Error>> {
+async fn create_mqtt_publisher(runtime: Arc<Runtime>, objname: String, mqtt: Arc<HAMQTTClient>, detrx: DetectionRx) -> Result<Task, Box<dyn Error>> {
     let worker = runtime
         .task()
         .spawn({
             |task_context| {
-                run_objdet( objname,
+                run_mqtt_publish( objname,
                     mqtt,
                     detrx )
             }
