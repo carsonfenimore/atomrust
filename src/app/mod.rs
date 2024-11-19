@@ -20,6 +20,8 @@ use crate::source::source_manager::SourceManager;
 use crate::libcam::LibCamContext;
 use crate::libcam::PacketTx;
 use crate::libcam::DetectionRx;
+use crate::pipeline::summarize_detections;
+use crate::pipeline::Detections;
 use crate::media::StreamInfo;
 use crate::hamqtt::HAMQTTClient;
 
@@ -106,13 +108,24 @@ async fn run_mqtt_publish(objname: String,  mqtt: Arc<HAMQTTClient>, mut detrx: 
         // After 5 seconds we just say no obj... in this way objdets clear...
         match timeout(Duration::from_millis(OBJDET_TIMEOUT_MILLIS), detrx.recv()).await {
             Ok(cmd) => {
-                    let num_dets = cmd.unwrap().len();
+                    let dets = cmd.unwrap();
+
+                    let num_dets = dets.len();
                     tracing::debug!("Received {} detections", num_dets);
-                    let _ = mqtt.publish(&objname, "objDetCount", num_dets, "", "");
+                    let _ = mqtt.publish(&objname, "objdet_total_objects", num_dets, "", "");
+
+                    // Report classes
+                    for (det_class, det_count) in summarize_detections(&dets) {
+                        let _ = mqtt.publish(&objname, format!("objdet_{}", det_class.as_str()).as_str(), det_count, "", "");
+                    }
                 }
             _ => {
                 tracing::debug!("Timeout waiting for objdet");
-                let _ = mqtt.publish(&objname, "objDetCount", 0, "", "");
+                let _ = mqtt.publish(&objname, "objdet_total_objects", 0, "", "");
+                const DETS: Detections = Detections::new();
+                for (det_class, _det_count) in summarize_detections(&DETS) {
+                    let _ = mqtt.publish(&objname, format!("objdet_{}", det_class.as_str()).as_str(), 0, "", "");
+                }
             },
         };
     }

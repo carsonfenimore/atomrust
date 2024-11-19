@@ -22,12 +22,12 @@ pub struct TFLiteStage<'a> {
 
 #[derive(Clone)]
 pub struct Detection {
-    xmin: i32,
-    ymin: i32,
-    xmax: i32,
-    ymax: i32,
-    score: f32,
-    class: String,
+    pub xmin: i32,
+    pub ymin: i32,
+    pub xmax: i32,
+    pub ymax: i32,
+    pub score: f32,
+    pub class: String,
 }
 
 pub type Detections = Vec<Detection>;
