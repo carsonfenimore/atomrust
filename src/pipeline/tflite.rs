@@ -71,7 +71,6 @@ impl<'a> TFLiteStage<'a> {
        interpreter.allocate_tensors()?;
        let inputs = interpreter.inputs().to_vec();
        assert_eq!(inputs.len(), 1);
-       let input_index = inputs[0];
        let tinfos = interpreter.get_input_details()?;
        let expected_height = tinfos[0].dims[1] as u32;
        let expected_width = tinfos[0].dims[2] as u32;
@@ -95,7 +94,7 @@ impl<'a> TFLiteStage<'a> {
     pub fn detect(&mut self, rgb_bytes: &[u8]) -> Result< Detections >{
         let inputs = self.interpreter.inputs().to_vec();
         let input_index = inputs[0];
-        let mut interp = self.interpreter.tensor_data_mut(input_index)?;
+        let interp = self.interpreter.tensor_data_mut(input_index)?;
         let input_len_bytes = interp.len();
         // tODO: assert rgb_bytes == input_len_bytes
         interp[..input_len_bytes].copy_from_slice(&rgb_bytes[..input_len_bytes]);

@@ -3,7 +3,6 @@ use std::fmt;
 
 use oddity_sdp_protocol::{CodecInfo, Direction, Kind, Protocol, TimeRange};
 
-use crate::media::video::reader;
 use crate::media::video::rtp_muxer;
 use crate::media::MediaDescriptor;
 use crate::media::StreamInfo;
@@ -13,25 +12,6 @@ pub use oddity_sdp_protocol::Sdp;
 /// Create a new SDP description for the given media descriptor. The
 /// SDP contents can be used over RTSP when the client requested a
 /// stream description.
-///
-/// Note: This function only handles the most appropriate video stream
-/// and tosses any audio or other streams.
-///
-/// # Arguments
-///
-/// * `name` - Name of stream.
-/// * `descriptor` - Media stream descriptor.
-pub async fn create_from_reader(name: &str, descriptor: &MediaDescriptor) -> Result<Sdp, SdpError> {
-    tracing::trace!("sdp: initializing reader");
-    let reader = reader::backend::make_reader_with_sane_settings(descriptor.clone().into())
-        .await
-        .map_err(SdpError::Media)?;
-    let best_video_stream = reader.best_video_stream_index().map_err(SdpError::Media)?;
-    tracing::trace!(best_video_stream, "sdp: initialized reader");
-
-    let stream_info = reader.stream_info(best_video_stream).unwrap();
-    create_from_info(&name, stream_info).await
-}
 
 pub async fn create_from_info(name: &str, stream_info: StreamInfo) -> Result<Sdp, SdpError> {
     const ORIGIN_DUMMY_HOST: [u8; 4] = [0, 0, 0, 0];

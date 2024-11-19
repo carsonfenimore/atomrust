@@ -42,12 +42,6 @@ pub struct MediaInfo {
 }
 
 impl MediaInfo {
-    pub fn from_reader_best_video_stream(reader: &Reader) -> Result<Self> {
-        let best_video_stream_index = reader.best_video_stream_index()?;
-        Ok(Self {
-            streams: vec![reader.stream_info(best_video_stream_index)?],
-        })
-    }
     pub fn from_stream_info(stream_info: StreamInfo) -> Self {
         Self {
             streams: vec![stream_info],
