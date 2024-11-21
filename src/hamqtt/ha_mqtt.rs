@@ -22,7 +22,7 @@ impl HAMQTTClient {
         })
     }
 
-    pub fn publish<A: Serialize>(&self, object_id: &str, name: &str, value: A, device_class: &str, unit_of_measurement: &str) 
+    pub async fn publish<A: Serialize>(&self, object_id: &str, name: &str, value: A, device_class: &str, unit_of_measurement: &str) 
         -> Result<(), Box<dyn std::error::Error>>{
 
         let component = "sensor";
@@ -51,7 +51,7 @@ impl HAMQTTClient {
             name: value });
         let json_state_str = json_state.to_string();
         let state_msg = mqtt::Message::new(state_topic, json_state_str, mqtt::QOS_1);
-        let _ = self.mqtt.publish(state_msg).wait();
+        let _ = self.mqtt.publish(state_msg).await;
         Ok(())
   }
 

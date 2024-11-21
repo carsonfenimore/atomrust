@@ -1,6 +1,7 @@
 pub mod config;
 pub mod handler;
 
+use async_std::fs;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -12,7 +13,9 @@ use crate::app::handler::AppHandler;
 use crate::net::server::Server;
 use crate::runtime::Runtime;
 use tokio::time::timeout;
+use tokio::time::sleep;
 use std::time::Duration;
+use std::process::Command;
 
 
 use crate::session::session_manager::SessionManager;
@@ -83,6 +86,11 @@ impl App {
             create_mqtt_publisher(runtime.clone(), config.mqtt.obj_name.clone(), hamqtt.clone(), obj_detections).await
         )?;
 
+        handle_err!(
+            runtime,
+            create_periodic_mqtt_publisher(runtime.clone(), config.mqtt.obj_name.clone(), hamqtt.clone()).await
+        )?;
+
         Ok(Self {
             server,
             context,
@@ -116,7 +124,7 @@ async fn run_mqtt_publish(objname: String,  mqtt: Arc<HAMQTTClient>, mut detrx: 
 
                     // Report classes
                     for (det_class, det_count) in summarize_detections(&dets) {
-                        let _ = mqtt.publish(&objname, format!("objdet_{}", det_class.as_str()).as_str(), det_count, "", "");
+                        let _ = mqtt.publish(&objname, format!("objdet_{}", det_class.as_str()).as_str(), det_count, "", "").await;
                     }
                 }
             _ => {
@@ -124,18 +132,52 @@ async fn run_mqtt_publish(objname: String,  mqtt: Arc<HAMQTTClient>, mut detrx: 
                 let _ = mqtt.publish(&objname, "objdet_total_objects", 0, "", "");
                 const DETS: Detections = Detections::new();
                 for (det_class, _det_count) in summarize_detections(&DETS) {
-                    let _ = mqtt.publish(&objname, format!("objdet_{}", det_class.as_str()).as_str(), 0, "", "");
+                    let _ = mqtt.publish(&objname, format!("objdet_{}", det_class.as_str()).as_str(), 0, "", "").await;
                 }
             },
         };
     }
 }
 
+async fn run_periodic_mqtt_publish(objname: String,  mqtt: Arc<HAMQTTClient>) {
+    const PERIODIC_PUBLISH_PERIOD:u64 = 5000;
+    const CPU_TEMP_PATH: &str = "/sys/class/thermal/thermal_zone0/temp";
+    loop {
+        sleep(Duration::from_millis(PERIODIC_PUBLISH_PERIOD)).await;
+        // TODO: put this into some kind of a pi_stats_publish class
+        let contents = fs::read_to_string(CPU_TEMP_PATH).await;
+        let cpu_temp = contents.unwrap().trim().parse::<u32>().unwrap() as f32 / 1000.0;
+        let _ = mqtt.publish(&objname, "temperature_cpu", cpu_temp, "temperature", "°C").await;
+
+        // get cpu load
+        let uptime = Command::new("uptime").output().unwrap();
+        let uptime_str = String::from_utf8(uptime.stdout).unwrap();
+        let parts: Vec<&str> = uptime_str.as_str().split_whitespace().collect();
+        let load1min = parts[parts.len()-3];
+        let load1minf = load1min[..load1min.len()-1].parse::<f32>().unwrap();
+        let _ = mqtt.publish(&objname, "load_cpu", load1minf, "", "").await;
+    }
+}
+
+async fn create_periodic_mqtt_publisher(runtime: Arc<Runtime>, objname: String, mqtt: Arc<HAMQTTClient>) -> Result<Task, Box<dyn Error>> {
+    let worker = runtime
+        .task()
+        .spawn({
+            |_task_context| {
+                run_periodic_mqtt_publish( objname,
+                    mqtt )
+            }
+        })
+    .await;
+
+    Ok(worker)
+}
+
 async fn create_mqtt_publisher(runtime: Arc<Runtime>, objname: String, mqtt: Arc<HAMQTTClient>, detrx: DetectionRx) -> Result<Task, Box<dyn Error>> {
     let worker = runtime
         .task()
         .spawn({
-            |task_context| {
+            |_task_context| {
                 run_mqtt_publish( objname,
                     mqtt,
                     detrx )

@@ -1,6 +1,4 @@
 
-use std::io::Read;
-
 use tflite::ops::builtin::BuiltinOpResolver;
 use tflite::{FlatBufferModel, InterpreterBuilder, Result};
 use tflite::{Interpreter};
@@ -9,8 +7,6 @@ use crate::app::config::PipelineConfig;
 use std::cmp::{max,min};
 use std::collections::HashMap;
 use std::fs::read_to_string;
-use crate::Error;
-
 
 pub struct TFLiteStage<'a> {
     interpreter: Interpreter<'a, BuiltinOpResolver>,
