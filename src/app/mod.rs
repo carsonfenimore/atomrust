@@ -1,5 +1,6 @@
 pub mod config;
 pub mod handler;
+mod sys_stats;
 
 use async_std::fs;
 use std::error::Error;
@@ -15,6 +16,7 @@ use crate::runtime::Runtime;
 use tokio::time::timeout;
 use tokio::time::sleep;
 use std::time::Duration;
+use std::time::Instant;
 use std::process::Command;
 
 
@@ -27,6 +29,7 @@ use crate::pipeline::summarize_detections;
 use crate::pipeline::Detections;
 use crate::media::StreamInfo;
 use crate::hamqtt::HAMQTTClient;
+use sys_stats::SysStats;
 
 macro_rules! handle_err {
     ($rt:ident, $expr:expr) => {
@@ -142,20 +145,40 @@ async fn run_mqtt_publish(objname: String,  mqtt: Arc<HAMQTTClient>, mut detrx: 
 async fn run_periodic_mqtt_publish(objname: String,  mqtt: Arc<HAMQTTClient>) {
     const PERIODIC_PUBLISH_PERIOD:u64 = 5000;
     const CPU_TEMP_PATH: &str = "/sys/class/thermal/thermal_zone0/temp";
+
+    let now = Instant::now();
+    let mut sys = SysStats::new();
     loop {
         sleep(Duration::from_millis(PERIODIC_PUBLISH_PERIOD)).await;
         // TODO: put this into some kind of a pi_stats_publish class
+
+        // cpu temp
         let contents = fs::read_to_string(CPU_TEMP_PATH).await;
         let cpu_temp = contents.unwrap().trim().parse::<u32>().unwrap() as f32 / 1000.0;
-        let _ = mqtt.publish(&objname, "temperature_cpu", cpu_temp, "temperature", "°C").await;
+        let _ = mqtt.publish(&objname, "temperature_cpu", cpu_temp as u8, "temperature", "°C").await;
 
-        // get cpu load
+        // cpu load
         let uptime = Command::new("uptime").output().unwrap();
         let uptime_str = String::from_utf8(uptime.stdout).unwrap();
         let parts: Vec<&str> = uptime_str.as_str().split_whitespace().collect();
         let load1min = parts[parts.len()-3];
         let load1minf = load1min[..load1min.len()-1].parse::<f32>().unwrap();
         let _ = mqtt.publish(&objname, "load_cpu", load1minf, "", "").await;
+
+        // uptime
+        let elapsed_time = now.elapsed();
+        let _ = mqtt.publish(&objname, "uptime", elapsed_time.as_secs(), "", "s").await;
+
+        sys.update();
+        // mem free
+        let _ = mqtt.publish(&objname, "mem_free", sys.mem_free, "", "%").await;
+        // disk 
+        let _ = mqtt.publish(&objname, "disk_available", sys.disk_avail, "", "%").await;
+        // net
+        for (int_name, tx, rx) in &sys.net_rate {
+            let _ = mqtt.publish(&objname, format!("net_{}_tx", int_name).as_str(), tx, "", "B/s").await;
+            let _ = mqtt.publish(&objname, format!("net_{}_rx", int_name).as_str(), rx, "", "B/s").await;
+        }
     }
 }
 
