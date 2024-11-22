@@ -26,12 +26,15 @@ impl RateReporter {
     pub fn isTimeToReport(&self) -> bool {
         self.duration() >= self.reportingSecs
     }
+    pub fn rate(&self) -> f32 {
+        let dur = self.duration();
+        let rate: f32 = self.count as f32 / dur;
+        rate
+    }
     pub fn tick(&mut self){
         self.count += 1;
         if self.isTimeToReport() {
-            let dur = self.duration();
-            let rate: f32 = self.count as f32 / dur;
-            tracing::debug!("{}: {} calls in past {} seconds; {} calls/sec", self.tag, self.count, dur, rate);
+            tracing::debug!("{}: {} calls in past {} seconds; {} calls/sec", self.tag, self.count, self.duration(), self.rate());
             self.count = 0;
             self.timeOfLastReport = Instant::now();
         }

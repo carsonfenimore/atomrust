@@ -28,11 +28,16 @@ use crate::app::config::PipelineConfig;
 pub type DetectionTx = broadcast::Sender<Detections>;
 pub type DetectionRx = broadcast::Receiver<Detections>;
 
+pub type RateTx = broadcast::Sender<f32>;
+pub type RateRx = broadcast::Receiver<f32>;
+
 pub struct LibCamContext {
     pub client: LibCamClient,
     stream_tx: StreamTx,
     pub packet_tx: PacketTx,
     detection_tx: DetectionTx,
+    lowres_rate_tx: RateTx,
+    h264_rate_tx: RateTx,
 }
 
 pub struct LibCamCallback<'a> {
@@ -48,6 +53,8 @@ pub struct LibCamCallback<'a> {
     timebase: Rational,
     tflite: TFLiteStage<'a>,
     detection_tx: DetectionTx,
+    lowres_rate_tx: RateTx,
+    h264_rate_tx: RateTx,
 }
 
 impl LibCamContext {
@@ -58,16 +65,22 @@ impl LibCamContext {
         let (stream_tx, _) = broadcast::channel(Self::MAX_QUEUED_PACKETS);
         let (packet_tx, _) = broadcast::channel(Self::MAX_QUEUED_PACKETS);
         let (detection_tx, _) = broadcast::channel(Self::MAX_QUEUED_DETECTIONS);
+        let (lowres_rate_tx, _) = broadcast::channel(1);
+        let (h264_rate_tx, _) = broadcast::channel(1);
         let callback = LibCamCallback::new(&libcam, &camera, &pipeline, 
                                             stream_tx.clone(), 
                                             packet_tx.clone(),
-                                            detection_tx.clone());
+                                            detection_tx.clone(),
+                                            lowres_rate_tx.clone(),
+                                            h264_rate_tx.clone());
         libcam.setCallbacks(callback);
 
         Self { client: libcam, 
                stream_tx,
                packet_tx,
-               detection_tx,}
+               detection_tx,
+               lowres_rate_tx,
+               h264_rate_tx,}
     }
 
     pub fn delegate_stream_info(&mut self) -> StreamRx {
@@ -76,6 +89,12 @@ impl LibCamContext {
 
     pub fn delegate_detection(&mut self) -> DetectionRx {
         self.detection_tx.subscribe()
+    }
+
+    pub fn delegate_rate(&mut self) -> (RateRx, RateRx) {
+        let rxdet = self.lowres_rate_tx.subscribe();
+        let h264rxdet = self.h264_rate_tx.subscribe();
+        (rxdet, h264rxdet)
     }
 
     pub fn stop(&self){
@@ -90,7 +109,9 @@ impl<'a> LibCamCallback<'a> {
     pub fn new(libcam: &LibCamClient, config: &Camera, pipeline: &PipelineConfig, 
                 streamtx: StreamTx, 
                 packettx: PacketTx,
-                detectiontx: DetectionTx) -> Box<Self> {
+                detectiontx: DetectionTx,
+                lowres_rate_tx: RateTx,
+                h264_rate_tx: RateTx) -> Box<Self> {
         //let lowres = StreamParams{ width: 300, height: 300, format: StreamFormat::STREAM_FORMAT_RGB, framerate: 30};
         //let h264_params = StreamParams{ width: 1920, height: 1080, format:  StreamFormat::STREAM_FORMAT_H264, framerate: 30};
 
@@ -116,6 +137,8 @@ impl<'a> LibCamCallback<'a> {
             timebase: Rational::new( 1000, config.framerate as i32 * 1000 ),
             tflite,
             detection_tx: detectiontx,
+            lowres_rate_tx,
+            h264_rate_tx,
         });
 
         callback
@@ -144,10 +167,16 @@ impl<'a> ExternalCallback for LibCamCallback<'a> {
             self.times.update(&mut pkt);
             let _ = self.packet_tx.send(pkt);
         }
+        if self.h264_reporter.isTimeToReport() {
+            let _ = self.h264_rate_tx.send(self.h264_reporter.rate());
+        }
         self.h264_reporter.tick();
     }
     unsafe fn callbackLowres(&mut self, bytes: *mut u8, count: usize){
         tracing::trace!("Got rgb frame; {} bytes, {}x{}", count, self.lowres_params.width, self.lowres_params.height);
+        if self.low_reporter.isTimeToReport() {
+            let _ = self.lowres_rate_tx.send(self.low_reporter.rate());
+        }
         self.low_reporter.tick();
 
         let dets = self.tflite.detect( std::slice::from_raw_parts(bytes, count) ).unwrap();

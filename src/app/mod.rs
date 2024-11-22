@@ -7,6 +7,7 @@ use std::error::Error;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
+use tokio::select;
 
 use crate::runtime::task_manager::Task;
 use crate::app::config::AppConfig;
@@ -24,6 +25,7 @@ use crate::session::session_manager::SessionManager;
 use crate::source::source_manager::SourceManager;
 use crate::libcam::LibCamContext;
 use crate::libcam::PacketTx;
+use crate::libcam::RateRx;
 use crate::libcam::DetectionRx;
 use crate::pipeline::summarize_detections;
 use crate::pipeline::Detections;
@@ -61,10 +63,9 @@ impl App {
             runtime,
             libcam.delegate_stream_info().recv().await
         )?;
-        tracing::debug!("In app setting up sources; libcam index is {}\n", stream_info.index);
 
         let obj_detections = libcam.delegate_detection();
-        tracing::debug!("In app setting up sources; libcam index is {}\n", stream_info.index);
+        let (lowres_rate_rx, h264_rate_rx) = libcam.delegate_rate();
             
         let mut context = initialize_context(runtime.clone()).await;
         handle_err!(
@@ -94,6 +95,11 @@ impl App {
             create_periodic_mqtt_publisher(runtime.clone(), config.mqtt.obj_name.clone(), hamqtt.clone()).await
         )?;
 
+        handle_err!(
+            runtime,
+            create_rate_publisher(runtime.clone(), config.mqtt.obj_name.clone(), hamqtt.clone(), lowres_rate_rx, h264_rate_rx).await
+        )?;
+
         Ok(Self {
             server,
             context,
@@ -119,23 +125,47 @@ async fn run_mqtt_publish(objname: String,  mqtt: Arc<HAMQTTClient>, mut detrx: 
         // After 5 seconds we just say no obj... in this way objdets clear...
         match timeout(Duration::from_millis(OBJDET_TIMEOUT_MILLIS), detrx.recv()).await {
             Ok(cmd) => {
+                if ! cmd.is_err() {
                     let dets = cmd.unwrap();
+                    // TODO
 
                     let num_dets = dets.len();
                     tracing::debug!("Received {} detections", num_dets);
-                    let _ = mqtt.publish(&objname, "objdet_total_objects", num_dets, "", "");
+                    let _ = mqtt.publish(&objname, "objdet_total_objects", num_dets, "", "").await;
 
                     // Report classes
                     for (det_class, det_count) in summarize_detections(&dets) {
                         let _ = mqtt.publish(&objname, format!("objdet_{}", det_class.as_str()).as_str(), det_count, "", "").await;
                     }
                 }
+            }
             _ => {
                 tracing::debug!("Timeout waiting for objdet");
-                let _ = mqtt.publish(&objname, "objdet_total_objects", 0, "", "");
+                let _ = mqtt.publish(&objname, "objdet_total_objects", 0, "", "").await;
                 const DETS: Detections = Detections::new();
                 for (det_class, _det_count) in summarize_detections(&DETS) {
                     let _ = mqtt.publish(&objname, format!("objdet_{}", det_class.as_str()).as_str(), 0, "", "").await;
+                }
+            },
+        };
+    }
+}
+
+async fn run_mqtt_rate_publish(objname: String,  mqtt: Arc<HAMQTTClient>, mut lowres_rate: RateRx, mut h264_rate: RateRx) {
+    loop {
+        select! {
+            rxcount = lowres_rate.recv() => {
+                if ! rxcount.is_err() {
+                    let lowrescount = rxcount.unwrap();
+                    tracing::debug!("Got framecount on lowres: {}", lowrescount);
+                    let _ = mqtt.publish(&objname, "framecount_objdet", lowrescount, "", "").await;
+                }
+            },
+            h264rxcount = h264_rate.recv() => {
+                if ! h264rxcount.is_err() {
+                    let h264count = h264rxcount.unwrap();
+                    tracing::debug!("Got framecount on h264: {}", h264count);
+                    let _ = mqtt.publish(&objname, "framecount_h264", h264count, "", "").await;
                 }
             },
         };
@@ -180,6 +210,20 @@ async fn run_periodic_mqtt_publish(objname: String,  mqtt: Arc<HAMQTTClient>) {
             let _ = mqtt.publish(&objname, format!("net_{}_rx", int_name).as_str(), rx, "", "B/s").await;
         }
     }
+}
+
+async fn create_rate_publisher(runtime: Arc<Runtime>, objname: String, mqtt: Arc<HAMQTTClient>, lowres_rate: RateRx, h264_rate: RateRx) -> Result<Task, Box<dyn Error>> {
+    let worker = runtime
+        .task()
+        .spawn({
+            |_task_context| {
+                run_mqtt_rate_publish( objname,
+                    mqtt, lowres_rate, h264_rate )
+            }
+        })
+    .await;
+
+    Ok(worker)
 }
 
 async fn create_periodic_mqtt_publisher(runtime: Arc<Runtime>, objname: String, mqtt: Arc<HAMQTTClient>) -> Result<Task, Box<dyn Error>> {
