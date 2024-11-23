@@ -195,6 +195,24 @@ async fn run_periodic_mqtt_publish(objname: String,  mqtt: Arc<HAMQTTClient>) {
         let load1minf = load1min[..load1min.len()-1].parse::<f32>().unwrap();
         let _ = mqtt.publish(&objname, "load_cpu", load1minf, "", "").await;
 
+        // wireless
+        let uptime = Command::new("iw").args(["dev","wlan0","link"]).output().unwrap();
+        let uptime_str = String::from_utf8(uptime.stdout).unwrap();
+        let lines: Vec<&str> = uptime_str.as_str().split("\n").collect();
+        for line_raw in lines{
+            let line = line_raw.trim();
+            if line.starts_with("rx bitrate") {
+                let line_parts: Vec<&str> = line.split_whitespace().collect();
+                let _ = mqtt.publish(&objname, "wifi_rx_bitrate", line_parts[2], "", line_parts[3]).await;
+            } else if line.starts_with("tx bitrate") {
+                let line_parts: Vec<&str> = line.split_whitespace().collect();
+                let _ = mqtt.publish(&objname, "wifi_tx_bitrate", line_parts[2], "", line_parts[3]).await;
+            } else if line.starts_with("signal:") {
+                let line_parts: Vec<&str> = line.split_whitespace().collect();
+                let _ = mqtt.publish(&objname, "wifi_signal", line_parts[1], "", line_parts[2]).await;
+            } 
+        }
+
         // uptime
         let elapsed_time = now.elapsed();
         let _ = mqtt.publish(&objname, "uptime", elapsed_time.as_secs(), "", "s").await;
