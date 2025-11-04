@@ -1,25 +1,37 @@
 # atomrust
 
-Atomrust provides the foundational layer for AI-enabled security cameras.
+Atomrust provides the foundational layer for AI-enabled raspberry pi cameras.
 
 ## Operation
 Atomrust combines RTSP (based on [https://github.com/oddity-ai/oddity-rtsp]) for streaming H.264 video to an NVR, such as BlueIris (https://blueirissoftware.com).  Simultaneously atomrust processes RGB streams locally on the camera in a pipeline similar to rpicam-apps.  Currently the pipeline has a single TFLite stage for object detection.  As objects are identified in the video stream they are immediately published over to HomeAssistant via MQTT [https://www.home-assistant.io].  This allow HA automations to react to object detection events.
 
 ## Requirements
-  - Right now atomrust only works on 64-bit versions of raspberry pi OS.  It could theoretically run on 32-bit pi OS.
-  - Processing: needs ~128MB of ram and consumes about 0.5 cores on a pi zero 2w. TFLite processing can consume a user-selectable number of cores.  For a pi zero 2w, if atomrust is configured to use 2 threads processing is capped at around 4fps.
-  - libcamera v0.3.1+rpt20240906
-  - rpicam-apps 1.5.1
+  - 64-bit versions pi OS 
+  - ~128MB of ram 
+  - around 0.5 cores on a pi zero 2w. 
+    TFLite processing can consume a user-selectable number of cores.  For a pi zero 2w, if atomrust is configured to use 2 threads processing is capped at around 4fps.
+  - rpicam-apps build: v1.10.0 24906da670e9-dirty 04-11-2025 (10:35:52)
+  - libcamera build: v0.5.2+99-bfd68f78
 
-## Installation
-  - Build and install libcamera/rpicam-apps
-  - Build and install atomrust
-  - Grab stock tflite model files
-    - mobilenet v2: https://github.com/google-coral/edgetpu/raw/refs/heads/master/test_data/ssd_mobilenet_v2_coco_quant_postprocess.tflite
-    - coco_labels.txt: https://raw.githubusercontent.com/google-coral/edgetpu/refs/heads/master/test_data/coco_labels.txt   
+## Building
+
+Before building remember to build/install libcamera/rpicam-apps
+
+  sudo apt install libssl-dev
+  cargo build
+
+NOTE: tflite seems to have a small build error, as reported here: https://github.com/conan-io/conan-center-index/issues/24538.  You can fix this by:
+
+  vim `find . -iname "spectrogram.cc"`
+  #include <cstdint>  // <-- add this line right above the line saying #include <assert.h>
 
 
 ## Running
+
+Note: for objdet grab stock tflite model files
+    - mobilenet v2: https://github.com/google-coral/edgetpu/raw/refs/heads/master/test_data/ssd_mobilenet_v2_coco_quant_postprocess.tflite
+    - coco_labels.txt: https://raw.githubusercontent.com/google-coral/edgetpu/refs/heads/master/test_data/coco_labels.txt   
+
 Populate a config.yaml, such as the following
 
     server:
@@ -56,6 +68,8 @@ This project is under active development and isn't fully ready.   We hope to hav
 
 
 ## Changelog
+ - 0.1.2 
+    - support for latest libcamlite-rs
  - 0.1.1 
 	- added tflite (after accidentally deleting it before pushing the code)
 	- tie together mqtt and tflite objdet - home assistant, ala mqtt discovery, should now know when an objdet occurs.

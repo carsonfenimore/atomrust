@@ -75,6 +75,8 @@ impl<'a> TFLiteStage<'a> {
        let outputs = interpreter.outputs().to_vec();
        assert_eq!(outputs.len(), 4);
 
+       tracing::info!("Constructing TFLite pipeline using model {} with labels {}", config.model_filename, config.label_filename);
+
        interpreter.set_num_threads(config.num_threads as i32); // so... you can have negative threads i see...
 
        let labels = LabelParser::new(&config.label_filename)?;

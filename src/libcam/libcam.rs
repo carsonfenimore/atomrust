@@ -51,7 +51,7 @@ pub struct LibCamCallback<'a> {
     packet_tx: PacketTx,
     times: Times,
     timebase: Rational,
-    tflite: TFLiteStage<'a>,
+    tflite: Option<TFLiteStage<'a>>,
     detection_tx: DetectionTx,
     lowres_rate_tx: RateTx,
     h264_rate_tx: RateTx,
@@ -60,14 +60,14 @@ pub struct LibCamCallback<'a> {
 impl LibCamContext {
     const MAX_QUEUED_PACKETS: usize = 30;
     const MAX_QUEUED_DETECTIONS : usize = 5;
-    pub fn new(camera: &Camera, pipeline: &PipelineConfig) -> Self {
+    pub fn new(camera: &Camera, pipeline: Option<&PipelineConfig>) -> Self {
         let libcam = LibCamClient::new();
         let (stream_tx, _) = broadcast::channel(Self::MAX_QUEUED_PACKETS);
         let (packet_tx, _) = broadcast::channel(Self::MAX_QUEUED_PACKETS);
         let (detection_tx, _) = broadcast::channel(Self::MAX_QUEUED_DETECTIONS);
         let (lowres_rate_tx, _) = broadcast::channel(1);
         let (h264_rate_tx, _) = broadcast::channel(1);
-        let callback = LibCamCallback::new(&libcam, &camera, &pipeline, 
+        let callback = LibCamCallback::new(&libcam, &camera, pipeline, 
                                             stream_tx.clone(), 
                                             packet_tx.clone(),
                                             detection_tx.clone(),
@@ -106,7 +106,7 @@ impl LibCamContext {
 
 impl<'a> LibCamCallback<'a> {
 
-    pub fn new(libcam: &LibCamClient, config: &Camera, pipeline: &PipelineConfig, 
+    pub fn new(libcam: &LibCamClient, config: &Camera, pipeline: Option<&PipelineConfig>, 
                 streamtx: StreamTx, 
                 packettx: PacketTx,
                 detectiontx: DetectionTx,
@@ -123,7 +123,12 @@ impl<'a> LibCamCallback<'a> {
         tracing::trace!("trying lowres {}x{}", config.lowres_width, config.lowres_height);
         libcam.client.setupLowres(&lowres);
 
-        let tflite = TFLiteStage::new(&pipeline, &config.lowres_width, &config.lowres_height).unwrap();
+        let mut tflite: Option<TFLiteStage> = None;
+        if pipeline.is_some() {
+            tflite = Some(TFLiteStage::new(pipeline.unwrap(), &config.lowres_width, &config.lowres_height).unwrap());
+        } else {
+           tracing::info!("Pipeline empty - not constructing TFLite pipeline");
+        }
         let callback = Box::new(Self {
             lowres_params: lowres,
             h264_params: h264_params,
@@ -179,9 +184,11 @@ impl<'a> ExternalCallback for LibCamCallback<'a> {
         }
         self.low_reporter.tick();
 
-        let dets = self.tflite.detect( std::slice::from_raw_parts(bytes, count) ).unwrap();
-        if dets.len() > 0 {
-            let _ = self.detection_tx.send(dets);
+        if let Some(tflite) = self.tflite.as_mut() {
+            let dets = tflite.detect( std::slice::from_raw_parts(bytes, count) ).unwrap();
+            if dets.len() > 0 {
+                let _ = self.detection_tx.send(dets);
+            }
         }
     }
 }

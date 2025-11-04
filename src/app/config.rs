@@ -9,8 +9,8 @@ use config::{Config, ConfigError};
 pub struct AppConfig {
     pub server: Server,
     pub camera: Camera,
-    pub mqtt: MQTTConfig,
-    pub pipeline: PipelineConfig,
+    pub mqtt: Option<MQTTConfig>,
+    pub pipeline: Option<PipelineConfig>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -78,19 +78,19 @@ impl Default for AppConfig {
                 profile: "main".to_string(),
                 intraperiod: 5,
             },
-            mqtt: MQTTConfig {
+            mqtt: Some(MQTTConfig {
                 host: "localhost".to_string(),
                 port: 1883,
                 username: "username".to_string(),
                 password: "password".to_string(),
                 obj_name: "atomcam".to_string(),
-            },
-            pipeline: PipelineConfig {
+            }),
+            pipeline: Some(PipelineConfig {
                 model_filename: "ssd_mobilenet_v2_coco_quant_postprocess.tflite".to_string(),
                 threshold: 0.6,
                 label_filename: "coco_labels.txt".to_string(),
                 num_threads: 2,
-            },
+            }),
         }
     }
 }

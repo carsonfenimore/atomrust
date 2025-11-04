@@ -31,6 +31,7 @@ use crate::pipeline::summarize_detections;
 use crate::pipeline::Detections;
 use crate::media::StreamInfo;
 use crate::hamqtt::HAMQTTClient;
+use config::MQTTConfig;
 use sys_stats::SysStats;
 
 macro_rules! handle_err {
@@ -50,14 +51,14 @@ pub struct App {
     context: Arc<RwLock<AppContext>>,
     runtime: Arc<Runtime>,
     libcam: LibCamContext,
-    hamqtt: Arc<HAMQTTClient>,
+    hamqtt: Option<Arc<HAMQTTClient>>,
 }
 
 impl App {
     pub async fn start(config: AppConfig) -> Result<App, Box<dyn Error>> {
         let runtime = Arc::new(Runtime::new());
 
-        let mut libcam = LibCamContext::new(&config.camera, &config.pipeline );
+        let mut libcam = LibCamContext::new(&config.camera, config.pipeline.as_ref() );
         libcam.client.start(true);
         let stream_info = handle_err!(
             runtime,
@@ -82,23 +83,31 @@ impl App {
             initialize_server(&config, context.clone(), runtime.clone(),).await
         )?;
 
-        let ha_conf = &config.mqtt;
-        let hamqtt = Arc::new(HAMQTTClient::new(ha_conf.host.as_str(), ha_conf.port, ha_conf.username.as_str(), ha_conf.password.as_str())?);
 
-        handle_err!(
-            runtime,
-            create_mqtt_publisher(runtime.clone(), config.mqtt.obj_name.clone(), hamqtt.clone(), obj_detections).await
-        )?;
+        let mut hamqtt: Option<Arc<HAMQTTClient>> = None;
+        if let Some(ha_conf) = config.mqtt.as_ref() {
+            tracing::info!("Constructing MQTT client to {}:{}", ha_conf.host.as_str(), ha_conf.port);
+            let thamqtt = Arc::new(HAMQTTClient::new(ha_conf.host.as_str(), ha_conf.port, ha_conf.username.as_str(), ha_conf.password.as_str())?);
 
-        handle_err!(
-            runtime,
-            create_periodic_mqtt_publisher(runtime.clone(), config.mqtt.obj_name.clone(), hamqtt.clone()).await
-        )?;
+            handle_err!(
+                runtime,
+                create_mqtt_publisher(runtime.clone(), ha_conf.obj_name.clone(), thamqtt.clone(), obj_detections).await
+            )?;
 
-        handle_err!(
-            runtime,
-            create_rate_publisher(runtime.clone(), config.mqtt.obj_name.clone(), hamqtt.clone(), lowres_rate_rx, h264_rate_rx).await
-        )?;
+            handle_err!(
+                runtime,
+                create_periodic_mqtt_publisher(runtime.clone(), ha_conf.obj_name.clone(), thamqtt.clone()).await
+            )?;
+
+            handle_err!(
+                runtime,
+                create_rate_publisher(runtime.clone(), ha_conf.obj_name.clone(), thamqtt.clone(), lowres_rate_rx, h264_rate_rx).await
+            )?;
+
+            hamqtt = Some(thamqtt);
+        } else {
+            tracing::info!("MQTT not specified - NOT Constructing MQTT client");
+        }
 
         Ok(Self {
             server,
@@ -279,6 +288,7 @@ async fn initialize_server(
     runtime: Arc<Runtime>,
 ) -> Result<Server, Box<dyn Error>> {
     let handler = AppHandler::new(context.clone());
+    tracing::info!("Constructing RTSP server on {}:{}", config.server.host, config.server.port);
     Server::start(
         config.server.host.parse()?,
         config.server.port,
