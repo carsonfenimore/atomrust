@@ -22,8 +22,10 @@ Before building remember to build/install libcamera/rpicam-apps
 
 NOTE: tflite seems to have a small build error, as reported here: https://github.com/conan-io/conan-center-index/issues/24538.  You can fix this by:
 
-  vim `find . -iname "spectrogram.cc"`
-  #include <cstdint>  // <-- add this line right above the line saying #include <assert.h>
+```
+vim `find . -iname "spectrogram.cc"`
+#include <cstdint>  // <-- add this line right above the line saying #include <assert.h>
+```
 
 
 ## Running
