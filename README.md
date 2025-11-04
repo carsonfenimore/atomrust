@@ -3,7 +3,11 @@
 Atomrust provides the foundational layer for AI-enabled raspberry pi cameras.
 
 ## Operation
-Atomrust combines RTSP (based on [https://github.com/oddity-ai/oddity-rtsp]) for streaming H.264 video to an NVR, such as BlueIris (https://blueirissoftware.com).  Simultaneously atomrust processes RGB streams locally on the camera in a pipeline similar to rpicam-apps.  Currently the pipeline has a single TFLite stage for object detection.  As objects are identified in the video stream they are immediately published over to HomeAssistant via MQTT [https://www.home-assistant.io].  This allow HA automations to react to object detection events.
+Atomrust captures h264/rgb streams using and publishes them over RTSP.  It also provides the following features:
+ - mqtt stats published in a Home Assistant-friendly format
+ - object detection with tensorflowlite
+
+When coupled with a high-quality camera module, such as a Sony Starvis based sensor, and an nvr such as BlueIris, this can provide an extremely robust, in-house security system.
 
 ## Requirements
   - 64-bit versions pi OS 
