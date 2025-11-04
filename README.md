@@ -68,7 +68,7 @@ Populate a config.yaml, such as the following
 
 Then run
 
-    atomrust config.yaml
+    LOG=info LD_LIBRARY_PATH=../libcamlite/build/ ./target/debug/atomrust config.yaml
 
 ## Development Status
 This project is under active development and isn't fully ready.   We hope to have an easily-deployable release soon.  
