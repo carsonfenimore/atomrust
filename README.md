@@ -21,8 +21,10 @@ When coupled with a high-quality camera module, such as a Sony Starvis based sen
 
 Before building remember to build/install libcamera/rpicam-apps
 
+```
   sudo apt install libssl-dev
   cargo build
+```
 
 NOTE: tflite seems to have a small build error, as reported here: https://github.com/conan-io/conan-center-index/issues/24538.  You can fix this by:
 
