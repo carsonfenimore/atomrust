@@ -37,9 +37,7 @@ vim `find . -iname "spectrogram.cc"`
 
 ## Running
 
-Note: for objdet grab stock tflite model files
-    - mobilenet v2: https://github.com/google-coral/edgetpu/raw/refs/heads/master/test_data/ssd_mobilenet_v2_coco_quant_postprocess.tflite
-    - coco_labels.txt: https://raw.githubusercontent.com/google-coral/edgetpu/refs/heads/master/test_data/coco_labels.txt   
+Note: for objdet we have included mobilenetv2/coco labels inside the models subdir
 
 Populate a config.yaml, such as the following
 
@@ -63,9 +61,9 @@ Populate a config.yaml, such as the following
       port: <mqtt_broker_port_usually_1883>
       obj_name: "atomcam"
     pipeline: 
-      model_filename: "ssd_mobilenet_v2_coco_quant_postprocess.tflite"
+      model_filename: "models/ssd_mobilenet_v2_coco_quant_postprocess.tflite"
       threshold: 0.6
-      label_filename: "coco_labels.txt"
+      label_filename: "models/coco_labels.txt"
       num_threads: 2
 
 Then run
