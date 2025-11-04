@@ -19,14 +19,14 @@ When coupled with a high-quality camera module, such as a Sony Starvis based sen
 
 ## Building
 
-Before building remember to build/install libcamera/rpicam-apps
+Before building remember to build/install libcamera/rpicam-apps. Once this is done you can build atomrust as follows:
 
 ```
   sudo apt install libssl-dev
   cargo build
 ```
 
-NOTE: tflite seems to have a small build error, as reported here: https://github.com/conan-io/conan-center-index/issues/24538.  You can fix this by:
+[!WARNING]: tflite seems to have a small build error, as reported here: https://github.com/conan-io/conan-center-index/issues/24538.  You can fix this by:
 
 ```
 vim `find . -iname "spectrogram.cc"`
