@@ -26,7 +26,7 @@ Before building remember to build/install libcamera/rpicam-apps. Once this is do
   cargo build
 ```
 
-[!WARNING]: tflite seems to have a small build error, as reported here: https://github.com/conan-io/conan-center-index/issues/24538.  You can fix this by:
+[!WARNING] tflite seems to have a small build error, as reported here: https://github.com/conan-io/conan-center-index/issues/24538.  You can fix this by:
 
 ```
 vim `find . -iname "spectrogram.cc"`
