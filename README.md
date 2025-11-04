@@ -70,6 +70,7 @@ This project is under active development and isn't fully ready.   We hope to hav
 ## Changelog
  - 0.1.2 
     - support for latest libcamlite-rs
+    - make mqtt and pipeline stages optional - ommitting both results in a simple rtsp server doing no processing or reporting
  - 0.1.1 
 	- added tflite (after accidentally deleting it before pushing the code)
 	- tie together mqtt and tflite objdet - home assistant, ala mqtt discovery, should now know when an objdet occurs.
