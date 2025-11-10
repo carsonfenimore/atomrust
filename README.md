@@ -1,11 +1,11 @@
 # atomrust
 
-Atomrust provides the foundational layer for AI-enabled raspberry pi cameras.
+Atomrust provides the foundational layer for AI-enabled raspberry pi cameras.  It efficiently (without decoding) streams RGB frames to tflite while streaming H.264 via RTSP.  Sensor stats can also be pushed via MQTT.  It does this efficiently, requiring only 10% CPU on pi zero 2w (excluding tflite processing)
 
 ## Operation
 Atomrust captures h264/rgb streams using and publishes them over RTSP.  It also provides the following features:
  - mqtt stats published in a Home Assistant-friendly format
- - object detection with tensorflowlite
+ - object detection with tflite
 
 When coupled with a high-quality camera module, such as a Sony Starvis based sensor, and an nvr such as BlueIris, this can provide an extremely robust, in-house security system.
 
