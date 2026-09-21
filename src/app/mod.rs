@@ -2,8 +2,8 @@ pub mod config;
 pub mod handler;
 mod sys_stats;
 
-use async_std::fs;
 use std::error::Error;
+use std::sync::atomic::Ordering;
 use std::sync::Arc;
 
 use tokio::sync::RwLock;
@@ -14,16 +14,17 @@ use crate::app::config::AppConfig;
 use crate::app::handler::AppHandler;
 use crate::net::server::Server;
 use crate::runtime::Runtime;
+use tokio::sync::broadcast::error::RecvError;
 use tokio::time::timeout;
 use tokio::time::sleep;
 use std::time::Duration;
 use std::time::Instant;
-use std::process::Command;
 
 
 use crate::session::session_manager::SessionManager;
 use crate::source::source_manager::SourceManager;
 use crate::libcam::LibCamContext;
+use crate::libcam::{mono_millis, FrameClock};
 use crate::libcam::PacketTx;
 use crate::libcam::RateRx;
 use crate::libcam::DetectionRx;
@@ -58,12 +59,26 @@ impl App {
     pub async fn start(config: AppConfig) -> Result<App, Box<dyn Error>> {
         let runtime = Arc::new(Runtime::new());
 
-        let mut libcam = LibCamContext::new(&config.camera, config.pipeline.as_ref() );
+        let mut libcam = LibCamContext::new(&config.camera, config.pipeline.as_ref())?;
+        // Subscribe before starting the camera so the one-shot stream info
+        // message can't be sent before anyone is listening.
+        let mut stream_info_rx = libcam.delegate_stream_info();
         libcam.client.start(true);
-        let stream_info = handle_err!(
-            runtime,
-            libcam.delegate_stream_info().recv().await
-        )?;
+        let stream_info = match timeout(STREAM_INFO_TIMEOUT, stream_info_rx.recv()).await {
+            Ok(Ok(stream_info)) => stream_info,
+            Ok(Err(err)) => {
+                runtime.stop().await;
+                return Err(err.into());
+            }
+            Err(_) => {
+                runtime.stop().await;
+                return Err(format!(
+                    "no H.264 stream from the camera after {:?}; is a camera connected and detected (rpicam-hello --list-cameras)?",
+                    STREAM_INFO_TIMEOUT
+                ).into());
+            }
+        };
+        spawn_frame_watchdog(libcam.last_frame.clone());
 
         let obj_detections = libcam.delegate_detection();
         let (lowres_rate_rx, h264_rate_rx) = libcam.delegate_rate();
@@ -128,16 +143,42 @@ impl App {
     }
 }
 
+/// How long to wait for the first H.264 frames at startup.
+const STREAM_INFO_TIMEOUT: Duration = Duration::from_secs(20);
+/// With no H.264 frames for this long the camera pipeline is considered wedged.
+const FRAME_STALL_TIMEOUT: Duration = Duration::from_secs(15);
+
+/// libcamlite restarts the camera on a libcamera timeout, but if frames stop
+/// for any other reason nothing recovers. Exit so systemd restarts us cleanly.
+fn spawn_frame_watchdog(last_frame: FrameClock) {
+    tokio::spawn(async move {
+        loop {
+            sleep(Duration::from_secs(5)).await;
+            let last = last_frame.load(Ordering::Relaxed);
+            let now = mono_millis();
+            if last != 0 && now.saturating_sub(last) > FRAME_STALL_TIMEOUT.as_millis() as u64 {
+                tracing::error!(
+                    "no camera frames for {}s; exiting so the service manager can restart us",
+                    now.saturating_sub(last) / 1000
+                );
+                std::process::exit(2);
+            }
+        }
+    });
+}
+
 async fn run_mqtt_publish(objname: String,  mqtt: Arc<HAMQTTClient>, mut detrx: DetectionRx) {
     const OBJDET_TIMEOUT_MILLIS:u64 = 5000;
     loop {
         // After 5 seconds we just say no obj... in this way objdets clear...
         match timeout(Duration::from_millis(OBJDET_TIMEOUT_MILLIS), detrx.recv()).await {
-            Ok(cmd) => {
-                if ! cmd.is_err() {
-                    let dets = cmd.unwrap();
-                    // TODO
-
+            Ok(Err(RecvError::Lagged(_))) => continue,
+            Ok(Err(RecvError::Closed)) => {
+                tracing::debug!("detection channel closed; stopping objdet publisher");
+                return;
+            }
+            Ok(Ok(dets)) => {
+                {
                     let num_dets = dets.len();
                     tracing::debug!("Received {} detections", num_dets);
                     let _ = mqtt.publish(&objname, "objdet_total_objects", num_dets, "", "").await;
@@ -164,17 +205,23 @@ async fn run_mqtt_rate_publish(objname: String,  mqtt: Arc<HAMQTTClient>, mut lo
     loop {
         select! {
             rxcount = lowres_rate.recv() => {
-                if ! rxcount.is_err() {
-                    let lowrescount = rxcount.unwrap();
-                    tracing::debug!("Got framecount on lowres: {}", lowrescount);
-                    let _ = mqtt.publish(&objname, "framecount_objdet", lowrescount, "", "").await;
+                match rxcount {
+                    Ok(lowrescount) => {
+                        tracing::debug!("Got framecount on lowres: {}", lowrescount);
+                        let _ = mqtt.publish(&objname, "framecount_objdet", lowrescount, "", "").await;
+                    }
+                    Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => return,
                 }
             },
             h264rxcount = h264_rate.recv() => {
-                if ! h264rxcount.is_err() {
-                    let h264count = h264rxcount.unwrap();
-                    tracing::debug!("Got framecount on h264: {}", h264count);
-                    let _ = mqtt.publish(&objname, "framecount_h264", h264count, "", "").await;
+                match h264rxcount {
+                    Ok(h264count) => {
+                        tracing::debug!("Got framecount on h264: {}", h264count);
+                        let _ = mqtt.publish(&objname, "framecount_h264", h264count, "", "").await;
+                    }
+                    Err(RecvError::Lagged(_)) => {}
+                    Err(RecvError::Closed) => return,
                 }
             },
         };
@@ -192,34 +239,34 @@ async fn run_periodic_mqtt_publish(objname: String,  mqtt: Arc<HAMQTTClient>) {
         // TODO: put this into some kind of a pi_stats_publish class
 
         // cpu temp
-        let contents = fs::read_to_string(CPU_TEMP_PATH).await;
-        let cpu_temp = contents.unwrap().trim().parse::<u32>().unwrap() as f32 / 1000.0;
-        let _ = mqtt.publish(&objname, "temperature_cpu", cpu_temp as u8, "temperature", "°C").await;
+        if let Some(cpu_temp) = read_trimmed(CPU_TEMP_PATH).await.and_then(|t| t.parse::<u32>().ok()) {
+            let _ = mqtt.publish(&objname, "temperature_cpu", (cpu_temp as f32 / 1000.0) as u8, "temperature", "°C").await;
+        }
 
-        // cpu load
-        let uptime = Command::new("uptime").output().unwrap();
-        let uptime_str = String::from_utf8(uptime.stdout).unwrap();
-        let parts: Vec<&str> = uptime_str.as_str().split_whitespace().collect();
-        let load1min = parts[parts.len()-3];
-        let load1minf = load1min[..load1min.len()-1].parse::<f32>().unwrap();
-        let _ = mqtt.publish(&objname, "load_cpu", load1minf, "", "").await;
+        // cpu load (1 minute)
+        if let Some(load1min) = read_trimmed("/proc/loadavg").await
+            .and_then(|l| l.split_whitespace().next().and_then(|v| v.parse::<f32>().ok()))
+        {
+            let _ = mqtt.publish(&objname, "load_cpu", load1min, "", "").await;
+        }
 
         // wireless
-        let uptime = Command::new("iw").args(["dev","wlan0","link"]).output().unwrap();
-        let uptime_str = String::from_utf8(uptime.stdout).unwrap();
-        let lines: Vec<&str> = uptime_str.as_str().split("\n").collect();
-        for line_raw in lines{
-            let line = line_raw.trim();
-            if line.starts_with("rx bitrate") {
-                let line_parts: Vec<&str> = line.split_whitespace().collect();
-                let _ = mqtt.publish(&objname, "wifi_rx_bitrate", line_parts[2], "", line_parts[3]).await;
-            } else if line.starts_with("tx bitrate") {
-                let line_parts: Vec<&str> = line.split_whitespace().collect();
-                let _ = mqtt.publish(&objname, "wifi_tx_bitrate", line_parts[2], "", line_parts[3]).await;
-            } else if line.starts_with("signal:") {
-                let line_parts: Vec<&str> = line.split_whitespace().collect();
-                let _ = mqtt.publish(&objname, "wifi_signal", line_parts[1], "", line_parts[2]).await;
-            } 
+        if let Some(link) = wifi_link_info().await {
+            for line_raw in link.lines() {
+                let line_parts: Vec<&str> = line_raw.split_whitespace().collect();
+                match line_parts.as_slice() {
+                    ["rx", "bitrate:", value, unit, ..] => {
+                        let _ = mqtt.publish(&objname, "wifi_rx_bitrate", *value, "", unit).await;
+                    }
+                    ["tx", "bitrate:", value, unit, ..] => {
+                        let _ = mqtt.publish(&objname, "wifi_tx_bitrate", *value, "", unit).await;
+                    }
+                    ["signal:", value, unit, ..] => {
+                        let _ = mqtt.publish(&objname, "wifi_signal", *value, "", unit).await;
+                    }
+                    _ => {}
+                }
+            }
         }
 
         // uptime
@@ -237,6 +284,20 @@ async fn run_periodic_mqtt_publish(objname: String,  mqtt: Arc<HAMQTTClient>) {
             let _ = mqtt.publish(&objname, format!("net_{}_rx", int_name).as_str(), rx, "", "B/s").await;
         }
     }
+}
+
+async fn read_trimmed(path: &str) -> Option<String> {
+    tokio::fs::read_to_string(path).await.ok().map(|s| s.trim().to_string())
+}
+
+/// `iw dev wlan0 link`, or None on wired-only boards / when iw is missing.
+async fn wifi_link_info() -> Option<String> {
+    let output = tokio::process::Command::new("iw")
+        .args(["dev", "wlan0", "link"])
+        .output()
+        .await
+        .ok()?;
+    output.status.success().then(|| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 async fn create_rate_publisher(runtime: Arc<Runtime>, objname: String, mqtt: Arc<HAMQTTClient>, lowres_rate: RateRx, h264_rate: RateRx) -> Result<Task, Box<dyn Error>> {

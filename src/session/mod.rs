@@ -8,7 +8,9 @@ use std::fmt;
 
 use tokio::select;
 use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::RecvError;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TrySendError;
 
 use rand::Rng;
 
@@ -172,6 +174,10 @@ impl Session {
     ) {
         let mut state = SessionMediaState::Ready;
         let mut need_stream_state = false;
+        // While playing, only start (or resume after dropping data) on a
+        // keyframe, so the client never decodes from a missing reference.
+        let mut wait_for_keyframe = true;
+        let mut dropped_frames: u64 = 0;
 
         let (mut source_reset_rx, mut source_packet_rx) = source_delegate.into_parts();
 
@@ -215,59 +221,91 @@ impl Session {
                 },
                 // CANCEL SAFETY: `broadcast::Receiver::recv` is cancel safe.
                 packet = source_packet_rx.recv() => {
-                    match packet {
-                        Ok(packet) => {
-                            let (muxed, packet) = rtp_muxer::muxed(muxer, packet).await;
-                            muxer = muxed;
-
-                            if need_stream_state {
-                                tracing::trace!(%id, "fetching stream state");
-                                let (rtp_seq, rtp_timestamp) = muxer.seq_and_timestamp();
-                                let stream_state = media::StreamState {
-                                    rtp_seq,
-                                    rtp_timestamp,
-                                };
-                                tracing::trace!(%id, rtp_seq, rtp_timestamp, "fetched stream state");
-                                let _ = stream_state_tx.send(stream_state);
-
-                                need_stream_state = false;
-                            }
-
-                            let packet = match packet {
-                                Ok(packet) => packet,
-                                Err(err) => {
-                                    tracing::error!(%id, %err, "failed to mux packet");
-                                    break;
-                                }
-                            };
-
-                            if state == SessionMediaState::Playing {
-                                let messages = packet.into_iter().map(|item| match item {
-                                    video::rtp::RtpBuf::Rtp(payload) => {
-                                        rtsp::ResponseMaybeInterleaved::Interleaved {
-                                            channel: target.rtp_channel,
-                                            payload: payload.into(),
-                                        }
-                                    }
-                                    video::rtp::RtpBuf::Rtcp(payload) => {
-                                        rtsp::ResponseMaybeInterleaved::Interleaved {
-                                            channel: target.rtcp_channel,
-                                            payload: payload.into(),
-                                        }
-                                    }
-                                });
-
-                                for message in messages {
-                                    if let Err(err) = target.sender.send(message) {
-                                        tracing::trace!(%id, %err, "underlying connection closed");
-                                        break 'main;
-                                    }
-                                }
-                            }
+                    let packet = match packet {
+                        Ok(packet) => packet,
+                        Err(RecvError::Lagged(skipped)) => {
+                            // We fell behind the camera (CPU contention); skip
+                            // ahead to the next keyframe instead of dropping the client.
+                            tracing::warn!(%id, skipped, "session lagged behind source; resyncing on next keyframe");
+                            wait_for_keyframe = true;
+                            continue;
                         }
-                        Err(_) => {
+                        Err(RecvError::Closed) => {
                             tracing::error!(%id, "source broken");
                             break;
+                        }
+                    };
+
+                    if state == SessionMediaState::Playing && wait_for_keyframe {
+                        if !packet.is_key() {
+                            continue;
+                        }
+                        if dropped_frames > 0 {
+                            tracing::info!(%id, dropped_frames, "resuming on keyframe");
+                            dropped_frames = 0;
+                        }
+                        wait_for_keyframe = false;
+                    }
+
+                    // RTP packetization is cheap; do it inline rather than
+                    // bouncing every frame through the blocking pool.
+                    let packet = muxer.mux(packet);
+
+                    if need_stream_state {
+                        tracing::trace!(%id, "fetching stream state");
+                        let (rtp_seq, rtp_timestamp) = muxer.seq_and_timestamp();
+                        let stream_state = media::StreamState {
+                            rtp_seq,
+                            rtp_timestamp,
+                        };
+                        tracing::trace!(%id, rtp_seq, rtp_timestamp, "fetched stream state");
+                        let _ = stream_state_tx.send(stream_state);
+
+                        need_stream_state = false;
+                    }
+
+                    let packet = match packet {
+                        Ok(packet) => packet,
+                        Err(err) => {
+                            tracing::error!(%id, %err, "failed to mux packet");
+                            break;
+                        }
+                    };
+
+                    if state == SessionMediaState::Playing {
+                        let messages = packet.into_iter().map(|item| match item {
+                            video::rtp::RtpBuf::Rtp(payload) => {
+                                rtsp::ResponseMaybeInterleaved::Interleaved {
+                                    channel: target.rtp_channel,
+                                    payload: payload.into(),
+                                }
+                            }
+                            video::rtp::RtpBuf::Rtcp(payload) => {
+                                rtsp::ResponseMaybeInterleaved::Interleaved {
+                                    channel: target.rtcp_channel,
+                                    payload: payload.into(),
+                                }
+                            }
+                        });
+
+                        for message in messages {
+                            match target.sender.try_send(message) {
+                                Ok(()) => {}
+                                Err(TrySendError::Full(_)) => {
+                                    // Client isn't keeping up: drop the rest of
+                                    // this frame and resume on the next keyframe.
+                                    if dropped_frames == 0 {
+                                        tracing::warn!(%id, "client not keeping up; dropping frames until next keyframe");
+                                    }
+                                    dropped_frames += 1;
+                                    wait_for_keyframe = true;
+                                    break;
+                                }
+                                Err(TrySendError::Closed(_)) => {
+                                    tracing::trace!(%id, "underlying connection closed");
+                                    break 'main;
+                                }
+                            }
                         }
                     }
                 },
@@ -276,6 +314,7 @@ impl Session {
                     match message {
                         Some(SessionControlMessage::Play) => {
                             state = SessionMediaState::Playing;
+                            wait_for_keyframe = true;
                             tracing::info!(%id, "session now playing");
                         },
                         Some(SessionControlMessage::StreamState) => {
@@ -299,7 +338,7 @@ impl Session {
         tracing::trace!(%id, "finishing muxer");
         // Throw away possible last RTP buffer (we don't care about
         // it since this is real-time and there's no "trailer".
-        let _ = rtp_muxer::finish(muxer).await;
+        let _ = muxer.finish();
         tracing::trace!(%id, "finished muxer");
     }
 

@@ -1,7 +1,15 @@
 [package]
 name = "atomrust"
-version = "0.1.2"
+version = "0.2.1"
 edition = "2021"
+description = "Low-overhead RTSP camera server (and optional TFLite object detection) for Raspberry Pi"
+license = "MIT"
+
+[features]
+default = ["objdet"]
+# TFLite object detection. Building TensorFlow Lite from source is the slowest
+# part of the build; disable with `--no-default-features` for an RTSP-only binary.
+objdet = ["dep:tflite"]
 
 [dependencies]
 oddity-rtsp-protocol = { path = "submodules/oddity-rtsp/oddity-rtsp-protocol" }
@@ -20,10 +28,19 @@ tokio-util = { version = "0.7.1", default-features = false, features = [
 video-rs = { path="submodules/video-rs" }
 ffmpeg-next = {version = "7.1.0", features=["rpi"]}
 ffmpeg-sys-next = "7.1.0"
-rslibcamlite = "0.1.9"
+rslibcamlite = "0.2"
 serde_json = "1.0.132"
-paho-mqtt = "0.12.5"
-tflite = "0.9.8"
-image = "0.25.4"
-async-std = "1.13.0"
+# Plain tcp:// only; TLS (the "ssl" feature) would add an OpenSSL dependency.
+paho-mqtt = { version = "0.12.5", default-features = false, features = ["bundled"] }
+tflite = { version = "0.9.8", optional = true }
 sysinfo = "0.32.0"
+
+[dev-dependencies]
+image = "0.25.4"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+debug = false
+strip = true

@@ -3,6 +3,7 @@ use tflite::ops::builtin::BuiltinOpResolver;
 use tflite::{FlatBufferModel, InterpreterBuilder, Result};
 use tflite::{Interpreter};
 use crate::app::config::PipelineConfig;
+use crate::pipeline::{Detection, Detections};
 
 use std::cmp::{max,min};
 use std::collections::HashMap;
@@ -16,18 +17,6 @@ pub struct TFLiteStage<'a> {
     height: u32,
 }
 
-#[derive(Clone)]
-pub struct Detection {
-    pub xmin: i32,
-    pub ymin: i32,
-    pub xmax: i32,
-    pub ymax: i32,
-    pub score: f32,
-    pub class: String,
-}
-
-pub type Detections = Vec<Detection>;
-
 type LabelMap = HashMap<i32, String>;
 struct LabelParser {
    labels: LabelMap,
@@ -35,17 +24,18 @@ struct LabelParser {
 
 impl LabelParser {
     pub fn new(filename: &String) -> Result<Self>{
-        let lines:Vec<String> = read_to_string(filename) 
-                            .unwrap()  
-                            .lines()  
-                            .map(String::from)  
-                            .collect();
+        let contents = read_to_string(filename).map_err(|err| {
+            tracing::error!(%err, filename, "failed to read label file");
+            tflite::Error::internal_error("failed to read label file")
+        })?;
         let mut labels = LabelMap::new();
-        for line in lines { 
-           let parts: Vec<&str> = line.split_whitespace().collect();
-           let class_num = parts[0].to_string().parse::<i32>().unwrap();
-           let class = parts[1];
-           labels.insert( class_num, class.to_string() );
+        for line in contents.lines() {
+           let mut parts = line.split_whitespace();
+           let (Some(num), Some(class)) = (parts.next(), parts.next()) else { continue };
+           match num.parse::<i32>() {
+               Ok(class_num) => { labels.insert(class_num, class.to_string()); }
+               Err(_) => tracing::warn!(line, "skipping malformed label line"),
+           }
         }
         Ok(Self { labels })
     }
@@ -94,7 +84,9 @@ impl<'a> TFLiteStage<'a> {
         let input_index = inputs[0];
         let interp = self.interpreter.tensor_data_mut(input_index)?;
         let input_len_bytes = interp.len();
-        // tODO: assert rgb_bytes == input_len_bytes
+        if rgb_bytes.len() < input_len_bytes {
+            return Err(tflite::Error::internal_error("lowres frame smaller than model input"));
+        }
         interp[..input_len_bytes].copy_from_slice(&rgb_bytes[..input_len_bytes]);
         self.interpreter.invoke()?;
 
@@ -103,7 +95,10 @@ impl<'a> TFLiteStage<'a> {
        let classes:&[f32] = self.interpreter.tensor_data(outputs[1])?;
        let scores:&[f32] = self.interpreter.tensor_data(outputs[2])?;
        let raw_num_detections:&[f32] = self.interpreter.tensor_data(outputs[3])?;
-       let num_detections = raw_num_detections[0] as usize;
+       let num_detections = (raw_num_detections[0] as usize)
+           .min(classes.len())
+           .min(scores.len())
+           .min(locations.len() / 4);
 
        let mut detections = Detections::new();
 
@@ -148,10 +143,15 @@ mod tests {
         let result0 = &det[0];
         assert_eq!(result0.class, "person".to_string());
         assert!( result0.score > 0.98 );
-        assert_eq!(result0.xmin, 126);
-        assert_eq!(result0.ymin, 68);
-        assert_eq!(result0.xmax, 245);
-        assert_eq!(result0.ymax, 251);
+        // Quantized inference rounds slightly differently across TFLite builds,
+        // compilers and CPUs, so allow a few pixels of slack on a 300x300 frame.
+        let near = |actual: i32, expected: i32, what: &str| {
+            assert!((actual - expected).abs() <= 3, "{what} = {actual}, expected {expected} ± 3");
+        };
+        near(result0.xmin, 126, "xmin");
+        near(result0.ymin, 68, "ymin");
+        near(result0.xmax, 245, "xmax");
+        near(result0.ymax, 251, "ymax");
     }
 }
 

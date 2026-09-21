@@ -1,6 +1,7 @@
 use std::fmt;
 use std::io::ErrorKind;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures::SinkExt;
 
@@ -26,8 +27,18 @@ pub enum ConnectionState {
 pub type ConnectionStateTx = mpsc::UnboundedSender<ConnectionState>;
 pub type ConnectionStateRx = mpsc::UnboundedReceiver<ConnectionState>;
 
-pub type ResponseSenderTx = mpsc::UnboundedSender<ResponseMaybeInterleaved>;
-pub type ResponseSenderRx = mpsc::UnboundedReceiver<ResponseMaybeInterleaved>;
+/// Carries interleaved RTP/RTCP from a session to its connection. Bounded so a
+/// slow or stalled client can't grow memory without limit: sessions `try_send`
+/// and drop media when it is full.
+pub type ResponseSenderTx = mpsc::Sender<ResponseMaybeInterleaved>;
+pub type ResponseSenderRx = mpsc::Receiver<ResponseMaybeInterleaved>;
+
+/// ~2-3 s of RTP at typical 4-8 Mbps bitrates.
+const MEDIA_QUEUE_LEN: usize = 1024;
+/// Max messages written per flush.
+const MAX_BATCH: usize = 64;
+/// A client that can't absorb a write for this long is considered dead.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct Connection {
     worker: Task,
@@ -41,7 +52,9 @@ impl Connection {
         state_tx: ConnectionStateTx,
         runtime: &Runtime,
     ) -> Self {
-        let (sender_tx, sender_rx) = mpsc::unbounded_channel();
+        let (sender_tx, sender_rx) = mpsc::channel(MEDIA_QUEUE_LEN);
+        // We batch writes ourselves; don't let Nagle add latency on top.
+        let _ = inner.set_nodelay(true);
 
         tracing::trace!(%id, "starting connection");
         let worker = runtime
@@ -90,24 +103,37 @@ impl Connection {
 
         loop {
             select! {
-                // CANCEL SAFETY: `mpsc::UnboundedReceiver::recv` is cancel safe.
+                // CANCEL SAFETY: `mpsc::Receiver::recv` is cancel safe.
                 message = response_rx.recv() => {
-                    match message {
-                        Some(message) => {
-                            match outbound.send(message).await {
-                                Ok(()) => {},
-                                Err(Error::Io(err)) if err.kind() == ErrorKind::ConnectionReset => {
-                                    disconnected = true;
-                                    tracing::info!(%id, %addr, "connection: client disconnected (reset)");
-                                    break;
-                                },
-                                Err(err) => {
-                                    tracing::error!(%err, %id, %addr, "connection: failed to send message");
-                                    break;
-                                }
+                    let Some(message) = message else { break };
+                    // Queue everything already waiting (typically all the RTP
+                    // packets of a frame) and flush once, rather than one
+                    // write syscall per packet.
+                    let write = async {
+                        outbound.feed(message).await?;
+                        for _ in 1..MAX_BATCH {
+                            match response_rx.try_recv() {
+                                Ok(message) => outbound.feed(message).await?,
+                                Err(_) => break,
                             }
+                        }
+                        outbound.flush().await
+                    };
+                    match tokio::time::timeout(WRITE_TIMEOUT, write).await {
+                        Ok(Ok(())) => {},
+                        Ok(Err(Error::Io(err))) if err.kind() == ErrorKind::ConnectionReset
+                            || err.kind() == ErrorKind::BrokenPipe => {
+                            disconnected = true;
+                            tracing::info!(%id, %addr, "connection: client disconnected (reset)");
+                            break;
                         },
-                        None => {
+                        Ok(Err(err)) => {
+                            tracing::error!(%err, %id, %addr, "connection: failed to send message");
+                            break;
+                        },
+                        Err(_) => {
+                            disconnected = true;
+                            tracing::warn!(%id, %addr, "connection: write stalled for {:?}; dropping client", WRITE_TIMEOUT);
                             break;
                         },
                     }
@@ -120,7 +146,10 @@ impl Connection {
                                 RequestMaybeInterleaved::Message(request) => {
                                     let response = handler.handle(&request, &response_tx).await;
                                     let response = ResponseMaybeInterleaved::Message(response);
-                                    match outbound.send(response).await {
+                                    match tokio::time::timeout(WRITE_TIMEOUT, outbound.send(response))
+                                        .await
+                                        .unwrap_or_else(|_| Err(Error::Io(ErrorKind::TimedOut.into())))
+                                    {
                                         Ok(()) => {},
                                         Err(Error::Io(err)) if err.kind() == ErrorKind::ConnectionReset => {
                                             disconnected = true;

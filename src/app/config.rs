@@ -41,12 +41,18 @@ pub struct Camera {
     pub rtsppath: String,
     pub width: u32,
     pub height: u32,
+    #[serde(default = "default_lowres")]
     pub lowres_width: u32,
+    #[serde(default = "default_lowres")]
     pub lowres_height: u32,
     pub framerate: u8,
     pub bitrate: String,
     pub profile: String,
     pub intraperiod: u8,
+}
+
+fn default_lowres() -> u32 {
+    300
 }
 
 impl fmt::Display for Camera {
@@ -99,7 +105,8 @@ impl AppConfig {
     pub fn from_file(path: &Path) -> Result<Self, ConfigError> {
         Config::builder()
             .add_source(config::File::from(path))
-            .add_source(config::Environment::with_prefix("oddity"))
+            // e.g. ATOMRUST_CAMERA__BITRATE=6mbps overrides camera.bitrate
+            .add_source(config::Environment::with_prefix("ATOMRUST").separator("__"))
             .build()?
             .try_deserialize()
     }

@@ -1,0 +1,56 @@
+# Cross-compilation environment for atomrust: x86_64 host -> arm64 Raspberry Pi OS (trixie).
+#
+# The RPi archive is pinned low except for the camera and ffmpeg stacks: its
+# rpt rebuilds of common libs (libssl, ...) would otherwise conflict with the
+# amd64 copies multiarch needs at identical versions. (Pins on foreign-arch
+# packages only match with an explicit :arm64 suffix.)
+#
+# Uses Debian multiarch so the arm64 dev packages (libcamera, rpicam-apps, the
+# Raspberry Pi ffmpeg build) are the exact versions the Pis run, and
+# dpkg-shlibdeps can compute the .deb's Depends from them.
+FROM docker.io/library/debian:trixie
+
+ENV DEBIAN_FRONTEND=noninteractive
+COPY raspberrypi-archive-keyring.pgp /usr/share/keyrings/raspberrypi-archive-keyring.pgp
+RUN dpkg --add-architecture arm64 \
+ && printf 'Types: deb\nURIs: http://archive.raspberrypi.com/debian/\nSuites: trixie\nComponents: main\nArchitectures: arm64\nSigned-By: /usr/share/keyrings/raspberrypi-archive-keyring.pgp\n' \
+      > /etc/apt/sources.list.d/raspi.sources \
+ && RPT='/^(libcamera|libpisp|librpicam|rpicam|libav|libsw|libpostproc)/' \
+ && printf 'Package: %s:arm64\nPin: origin archive.raspberrypi.com\nPin-Priority: 600\n\nPackage: %s\nPin: origin archive.raspberrypi.com\nPin-Priority: 600\n\nPackage: *\nPin: origin archive.raspberrypi.com\nPin-Priority: 100\n' "$RPT" "$RPT" \
+      > /etc/apt/preferences.d/raspi \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends \
+      ca-certificates curl git make cmake pkgconf file xz-utils \
+      clang libclang-dev dpkg-dev fakeroot \
+      gcc-aarch64-linux-gnu g++-aarch64-linux-gnu libc6-dev-arm64-cross \
+      libssl-dev:arm64 \
+      libcamera-dev:arm64 librpicam-app-dev:arm64 libboost-program-options-dev:arm64 \
+      libavcodec-dev:arm64 libavformat-dev:arm64 libavutil-dev:arm64 \
+      libavfilter-dev:arm64 libavdevice-dev:arm64 libswscale-dev:arm64 \
+      libswresample-dev:arm64 \
+ && rm -rf /var/lib/apt/lists/*
+
+# ffmpeg-sys-next compiles and runs a feature probe with the *host* compiler.
+# Pointing it at /usr/include/aarch64-linux-gnu would drag arm64 glibc headers
+# into that x86_64 build, so give it a dir holding only the libav headers.
+RUN mkdir -p /opt/ffmpeg-arm64/include /opt/ffmpeg-arm64/lib \
+ && for d in libavutil libavcodec libavformat libavfilter libavdevice libswscale libswresample libpostproc; do \
+      [ -d /usr/include/aarch64-linux-gnu/$d ] && ln -s /usr/include/aarch64-linux-gnu/$d /opt/ffmpeg-arm64/include/$d; \
+    done; \
+    ln -s /usr/lib/aarch64-linux-gnu /opt/ffmpeg-arm64/lib/arm64
+
+ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
+RUN curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain stable \
+      --target aarch64-unknown-linux-gnu \
+ && chmod -R a+rwX /opt/cargo /opt/rustup
+
+ENV CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
+    CC_aarch64_unknown_linux_gnu=aarch64-linux-gnu-gcc \
+    CXX_aarch64_unknown_linux_gnu=aarch64-linux-gnu-g++ \
+    AR_aarch64_unknown_linux_gnu=aarch64-linux-gnu-ar \
+    PKG_CONFIG_LIBDIR_aarch64_unknown_linux_gnu=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig \
+    PKG_CONFIG_ALLOW_CROSS=1 \
+    BINDGEN_EXTRA_CLANG_ARGS_aarch64_unknown_linux_gnu="--target=aarch64-linux-gnu" \
+    FFMPEG_DIR=/opt/ffmpeg-arm64 \
+    TFLITE_RS_MAKE_TARGET_TOOLCHAIN_PREFIX=aarch64-linux-gnu- \
+    TFLITE_RS_MAKE_EXTRA_CXXFLAGS="-include stdint.h"

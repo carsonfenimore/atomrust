@@ -1,0 +1,31 @@
+# atomrust configuration. After editing: sudo systemctl restart atomrust
+# (with the read-only overlay enabled, edits are lost on reboot; run
+# `sudo atomrust-rw`, reboot, edit, then `sudo atomrust-ro`).
+server:
+  host: 0.0.0.0
+  port: 5554          # RTSP URL: rtsp://<pi>:5554/atomrust  (TCP/interleaved transport)
+camera:
+  rtsppath: "/atomrust"
+  width: 1920
+  height: 1080
+  framerate: 30
+  bitrate: "4mbps"
+  profile: "high"
+  # Keyframe interval in frames. 1-2 seconds' worth (framerate..2*framerate)
+  # is a good balance; very small values waste most of the bitrate on I-frames.
+  intraperiod: 30
+
+# Home Assistant sensors via MQTT discovery (optional).
+#mqtt:
+#  host: "192.168.1.10"
+#  port: 1883
+#  username: "mqttuser"
+#  password: "mqttpass"
+#  obj_name: "atomcam"
+
+# TFLite object detection on a low-res RGB stream (optional; costs CPU).
+#pipeline:
+#  model_filename: "/usr/share/atomrust/models/ssd_mobilenet_v2_coco_quant_postprocess.tflite"
+#  label_filename: "/usr/share/atomrust/models/coco_labels.txt"
+#  threshold: 0.6
+#  num_threads: 2

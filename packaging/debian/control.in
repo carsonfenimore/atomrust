@@ -1,0 +1,17 @@
+Package: atomrust
+Version: @VERSION@
+Architecture: arm64
+Maintainer: Carson Fenimore <fenimore@gmail.com>
+Section: video
+Priority: optional
+Depends: @SHLIBS@, adduser, overlayroot, initramfs-tools
+Recommends: iw
+Installed-Size: @SIZE@
+Homepage: https://github.com/carsonfenimore/atomrust
+Description: low-overhead RTSP camera server for Raspberry Pi
+ Streams the Pi camera's hardware-encoded H.264 over RTSP without decoding,
+ optionally runs TFLite object detection on a low-res stream and reports
+ detections and system stats to Home Assistant via MQTT.
+ .
+ Includes atomrust-ro / atomrust-rw to run the Pi with a read-only SD card
+ (RAM overlay root) and switch back for updates.

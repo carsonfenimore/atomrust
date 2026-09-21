@@ -1,0 +1,22 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ]; then
+	if ! getent passwd atomrust >/dev/null; then
+		adduser --system --group --no-create-home --home /nonexistent atomrust
+	fi
+	adduser --quiet atomrust video >/dev/null
+	# The config may hold MQTT credentials.
+	chown root:atomrust /etc/atomrust/config.yml
+	chmod 0640 /etc/atomrust/config.yml
+
+	systemctl daemon-reload || true
+	systemctl enable atomrust.service >/dev/null 2>&1 || true
+	systemctl restart atomrust.service || true
+
+	if grep -qw 'overlayroot=tmpfs' /proc/cmdline; then
+		echo "WARNING: the read-only overlay is active, so this install only lives in RAM" >&2
+		echo "         and will be gone after reboot. Run 'sudo atomrust-rw', reboot, and install again." >&2
+	fi
+fi
+exit 0

@@ -1,0 +1,32 @@
+[Unit]
+Description=atomrust RTSP camera server
+Documentation=https://github.com/carsonfenimore/atomrust
+After=network.target
+# Keep retrying forever: a camera appliance should never give up.
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+User=atomrust
+Group=atomrust
+SupplementaryGroups=video
+ExecStart=/usr/bin/atomrust /etc/atomrust/config.yml
+Environment=LOG=info
+Restart=always
+RestartSec=3
+TimeoutStopSec=15
+# Allow binding the standard RTSP port (554) if configured.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+# Favour smooth streaming over background work.
+Nice=-5
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -5,3 +5,5 @@ pub use libcam::PacketTx;
 pub use libcam::DetectionRx;
 pub use libcam::PacketRx;
 pub use libcam::RateRx;
+pub use libcam::FrameClock;
+pub use libcam::mono_millis;
